@@ -1,10 +1,14 @@
-# OneDrive Helper
+# OneDrive Helper for NinjaOne
 
-A small Windows tool that keeps an eye on OneDrive for your users, and tells them (and you) when something has quietly gone wrong.
+A small Windows tool that keeps an eye on OneDrive for your users, tells them when something has quietly gone wrong, restarts OneDrive when it stops, and reports all of it into NinjaOne custom fields so your policy conditions can open the ticket.
 
 <p align="center">
   <img src="docs/images/status-problems.png" width="716" alt="OneDrive Helper status window listing folders that have stopped syncing">
 </p>
+
+This is a NinjaOne-focused fork of [Denis Mc Auliffe's OneDrive Helper](https://github.com/denismcapple/OneDriveHelper). The original is deliberately RMM-neutral; this one is built around NinjaOne: the service writes the custom fields itself through the NinjaOne agent's command-line tool, reads each customer's settings from an organization-level field, and ships with the scripts and the setup guide for a NinjaOne tenant. See [Credits](#credits) for everyone whose work this builds on.
+
+**Start here if you run NinjaOne:** [ninjaone/README.md](ninjaone/README.md) is the step-by-step: fields, settings, deployment, conditions and tickets.
 
 ## Why we built this
 
@@ -27,10 +31,12 @@ We got tired of finding out about these the hard way, so we wrote something that
 * **Makes it easy to get help.** **Contact support** offers to e-mail your service desk with a full diagnostic report already in the message, or to open your support website.
 * **Fixes broken folders safely**, after an administrator approves. It saves a copy of every file stored on the PC first, removes the broken folder, then asks OneDrive to sync the library again.
 * **Puts a status icon in the system tray**, so when a user rings you, you can see straight away what's wrong, even if they closed the alert.
-* **Writes everything to the Windows event log**, so your RMM can raise a ticket or alert you.
-* **Can be branded per customer**: company name, support contact, colours and wording, all set from a settings file you push out with your RMM.
+* **Reports to NinjaOne custom fields.** The service keeps `ODErrors` (a per-user status table), `ODHealth` (Healthy / Warning / Critical / Stale / NoUser), `ODStaleFolders` (how many folders stopped syncing) and `ODLastReport` up to date, within a minute of a change. A policy condition on `ODStaleFolders > 0` opens the Halo ticket and resolves it when the user fixes the folder.
+* **Takes its settings from NinjaOne.** Paste a settings file into the organization-level `ODHelperConfig` field once per customer; every PC in that organization picks it up within the hour.
+* **Writes everything to the Windows event log** as well, for event-based conditions.
+* **Can be branded per customer**: company name, support contact, colours and wording.
 
-It's written in Go, runs as a normal Windows service, and has no dependencies to install. There's no PowerShell at runtime, no .NET, and no cloud service.
+It's written in Go, runs as a normal Windows service, and has no dependencies to install. There's no PowerShell at runtime, no .NET, and no cloud service of its own: the only thing it talks to is `ninjarmm-cli.exe`, which the NinjaOne agent installs.
 
 ## What users see
 
@@ -98,7 +104,7 @@ Some safety rules that are always applied:
 
 ## Download
 
-Ready-built binaries are on the [Releases page](https://github.com/denismcapple/OneDriveHelper/releases):
+Ready-built binaries are on the [Releases page](https://github.com/geekbrownbear/OneDriveHelper/releases):
 
 | File | For |
 |---|---|
@@ -114,7 +120,7 @@ Each zip contains three programs:
 | `OneDriveHelperAgent.exe` | The part that runs for each user and shows the alerts |
 | `OneDriveHelperConfig.exe` | The settings tool |
 
-The release binaries are **not code-signed** yet, so SmartScreen or your antivirus may be wary of them. If you'd rather not run binaries built by someone else, that's completely fair: the full source is here, and building it yourself takes a couple of minutes (see [Building from source](#building-from-source)). If you deploy at scale, signing the binaries with your own code-signing certificate is a good idea.
+Releases are built by the GitHub Actions workflow in this repository. They are code-signed only if the repository has a signing certificate configured (`CODESIGN_PFX` / `CODESIGN_PASSWORD` secrets); otherwise SmartScreen or your antivirus may be wary of them, and application control such as ThreatLocker has to match by hash. If you'd rather not run binaries built by someone else, the full source is here and building it yourself takes a couple of minutes (see [Building from source](#building-from-source)).
 
 Verify a download in PowerShell:
 
@@ -229,7 +235,14 @@ Settings live in `HKLM\SOFTWARE\OneDriveHelper`. Changes are picked up within a 
 | `TrayIconEnabled` | `1` | Show the tray icon |
 | `PopupSound` | `1` | Play the Windows warning sound when an alert appears |
 | `CheckIntervalSeconds` | `60` | How often each user's checks run |
-| `AgentWatchdogSeconds` | `30` | How often the service makes sure every user has the user part running |
+| `AgentWatchdogSeconds` | `30` | How often the service makes sure every user has the user part running, and refreshes the machine status |
+| `NinjaEnabled` | `1` | Write the status to NinjaOne custom fields through `ninjarmm-cli.exe`. Does nothing on a PC without the NinjaOne agent |
+| `NinjaFieldStatus` | `ODErrors` | WYSIWYG field that gets the per-user table. Blank = skip |
+| `NinjaFieldHealth` | `ODHealth` | Dropdown field that gets `Healthy`, `Warning`, `Critical`, `Stale` or `NoUser`. Blank = skip |
+| `NinjaFieldStaleCount` | `ODStaleFolders` | Integer field that gets the number of folders not syncing. Blank = skip |
+| `NinjaFieldLastReport` | `ODLastReport` | Date/time field that gets the time of the last report. Blank = skip |
+| `NinjaPushMinutes` | `60` | Fields are updated whenever the status changes, and at least this often. Also how often `ODHelperConfig` is checked |
+| `NinjaConfigField` | `ODHelperConfig` | Field (normally organization-level) holding a settings file to apply. Blank = don't read settings from NinjaOne |
 
 Whole numbers and on/off settings are `REG_DWORD`; text is `REG_SZ`.
 
@@ -237,27 +250,38 @@ Whole numbers and on/off settings are `REG_DWORD`; text is `REG_SZ`.
 
 Anything you put in `HKLM\SOFTWARE\Policies\OneDriveHelper`, using the same names, overrides the normal settings and survives a re-import. That's useful if you manage some settings through Group Policy Preferences or Intune and want to stop them being changed locally. The settings tool shows which settings are being enforced this way.
 
-## Deploying it with an RMM tool
+## Deploying with NinjaOne
 
-This is how we roll it out. The idea is simple:
+The full walk-through is in [ninjaone/README.md](ninjaone/README.md). In short:
 
-1. Build one settings file per customer (once, in the settings tool, then **Export**).
-2. Store it with your RMM scripts.
-3. Run a script on each PC that downloads the release, checks the hash, drops the settings file next to it, and runs `install --config`.
+1. Create the custom fields `ODErrors`, `ODHealth`, `ODStaleFolders`, `ODLastReport` (device) and `ODHelperConfig` (organization).
+2. Paste each customer's settings JSON into their `ODHelperConfig`.
+3. Add [`ninjaone/Install-OneDriveHelper.ps1`](ninjaone/Install-OneDriveHelper.ps1) as a script with the `version` and hash variables, and run it on the devices.
+4. Add the policy conditions: `ODStaleFolders > 0` for the "verify with the user" ticket, `ODHealth = Critical` for failed fixes, `ODLastReport` older than a day for PCs that stop reporting.
 
-RMM agents run scripts as SYSTEM, which already has the admin rights the installer needs.
+The service does the reporting itself, so there is no scheduled script to keep alive. A fallback script is included for tenants where `ninjarmm-cli` can't be used from a service.
 
-### Install script (PowerShell)
+### What gets reported
 
-This works in NinjaOne, Datto RMM, N-able, ConnectWise Automate, Atera, Kaseya, Intune platform scripts and anything else that can run PowerShell as SYSTEM. It's filled in for v0.7.0; for a later release, change the version and copy the two checksums from that release's `SHA256SUMS.txt`. Paste your customer's settings into the JSON block.
+The service refreshes the machine status every 30 seconds (`AgentWatchdogSeconds`) and writes it in three places:
+
+* **NinjaOne custom fields**, when the status changed and at least every `NinjaPushMinutes`.
+* `C:\ProgramData\OneDriveHelper\status.json`: the full report, one entry per signed-in user. `OneDriveHelper.exe status` prints it as a table; `--json` and `--html` give the raw forms.
+* `HKLM\SOFTWARE\OneDriveHelper\Status`: `Health`, `Summary`, `StaleFolderCount`, `StaleFolders` (multi-string, `user|path`), `Users`, `UpdatedAt`. Enough for any script to read with one `Get-ItemProperty`.
+
+The roll-up rules: a user is **Critical** with any folder not syncing or a fix that failed in the last 7 days; **Warning** when OneDrive has been down past the grace period, automatic restarts failed, or they are ignoring an alert about a live problem; **Stale** when their agent hasn't reported for three check intervals; otherwise **Healthy**. The machine takes the worst user, or **NoUser** when nobody is signed in.
+
+### Other RMM tools
+
+Everything above except the custom-field push works anywhere: the event log, `status.json` and the registry key are there whatever runs the scripts. This generic install script works in Datto RMM, N-able, ConnectWise Automate, Atera, Kaseya, Intune platform scripts and anything else that can run PowerShell as SYSTEM. Fill in the version and copy the two checksums from that release's `SHA256SUMS.txt`. Paste the customer's settings into the JSON block.
 
 ```powershell
 # OneDrive Helper: install or upgrade with customer settings
 $ErrorActionPreference = 'Stop'
-$Version = 'v0.7.0'
+$Version = 'v1.0.0'
 $Hashes  = @{                       # from SHA256SUMS.txt on the release page
-    'x64'   = '482753930345CC9A2F21010600E36A1A66B2F840887BA19D23AB79304D7F17B0'
-    'arm64' = 'FF7F5C0027D8C77406C5D69156E516909CC5D03B1430387033BA1E88F51B229B'
+    'x64'   = '<paste from SHA256SUMS.txt>'
+    'arm64' = '<paste from SHA256SUMS.txt>'
 }
 $Settings = @'
 {
@@ -270,7 +294,7 @@ $Settings = @'
 '@
 
 $arch = if ($env:PROCESSOR_ARCHITEW6432 -eq 'ARM64' -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
-$url  = "https://github.com/denismcapple/OneDriveHelper/releases/download/$Version/OneDriveHelper-$Version-$arch.zip"
+$url  = "https://github.com/geekbrownbear/OneDriveHelper/releases/download/$Version/OneDriveHelper-$Version-$arch.zip"
 
 # Work in a randomly named folder that only SYSTEM and Administrators can touch.
 # (C:\Windows\Temp lets ordinary users create files, so a fixed, guessable path
@@ -335,9 +359,9 @@ Put the three programs and your `settings.json` in a folder, wrap it with the Wi
 * **Install behaviour:** System
 * **Detection:** file `C:\Program Files\OneDriveHelper\OneDriveHelper.exe` exists, or the `OneDriveHelper` service exists
 
-### Getting alerts in your RMM
+### Event log
 
-Everything important goes to the **Application** event log under the source **OneDriveHelper**. Point your RMM's event log monitoring at these:
+Everything important also goes to the **Application** event log under the source **OneDriveHelper**. NinjaOne's custom-field conditions are the ones that resolve themselves; use these for an instant alert, or in an RMM without the custom fields:
 
 | Event ID | Level | Meaning |
 |---|---|---|
@@ -369,12 +393,12 @@ And for information, if you want the full picture:
 You need [Go](https://go.dev/dl/) 1.27 or newer. The only third-party code is Go's own `golang.org/x/sys` package.
 
 ```powershell
-git clone https://github.com/denismcapple/OneDriveHelper.git
+git clone https://github.com/geekbrownbear/OneDriveHelper.git
 cd OneDriveHelper
 .\build.ps1 -Version 1.0.0
 ```
 
-That runs the checks and tests, then builds both architectures into `dist\amd64` and `dist\arm64`. If you'd rather do it by hand:
+That runs the checks and tests, then builds both architectures into `dist\amd64` and `dist\arm64`. Pushing a tag such as `v1.0.0` makes the GitHub Actions workflow do the same and attach the zips and `SHA256SUMS.txt` to a draft release. If you'd rather do it by hand:
 
 ```powershell
 go build -o OneDriveHelper.exe ./cmd/OneDriveHelper
@@ -394,6 +418,16 @@ These need no admin rights; run them as the user:
 & "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" check                 # what it sees: accounts, synced folders, problems
 & "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" remediate --dry-run   # exactly what a fix would do, changes nothing
 & "C:\Program Files\OneDriveHelper\OneDriveHelperAgent.exe" test-popup       # show the alerts
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" status                # the machine status the service reports
+```
+
+For the NinjaOne side (from a NinjaOne remote shell, which runs as SYSTEM):
+
+```powershell
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja check            # is ninjarmm-cli there, which fields are used
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja push --dry-run   # the HTML that would go to ODErrors
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja push             # update the fields now
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja pull --dry-run   # what ODHelperConfig holds
 ```
 
 Log files:
@@ -409,8 +443,8 @@ The quickest way to get everything in one go is the tray icon's **Copy details f
 
 There are two parts:
 
-* **The service** (`OneDriveHelper.exe`, running as LocalSystem) watches for people signing in, unlocking and connecting over Remote Desktop. It makes sure each session has the user part running, starts it as that user, and restarts it if it stops.
-* **The user part** (`OneDriveHelperAgent.exe`) does the actual checking every minute, shows the alerts and the tray icon, and handles the buttons. It runs as the user because OneDrive's settings are per user, and because restarting OneDrive has to happen as them.
+* **The service** (`OneDriveHelper.exe`, running as LocalSystem) watches for people signing in, unlocking and connecting over Remote Desktop. It makes sure each session has the user part running, starts it as that user, and restarts it if it stops. Every 30 seconds it also collects each user's status, writes the machine report, and updates the NinjaOne fields when something changed.
+* **The user part** (`OneDriveHelperAgent.exe`) does the actual checking every minute, shows the alerts and the tray icon, and handles the buttons. It runs as the user because OneDrive's settings are per user, and because restarting OneDrive has to happen as them. After every check it leaves a status snapshot in its own registry hive for the service to pick up.
 
 This works on Remote Desktop / Azure Virtual Desktop hosts too, with one user part per session.
 
@@ -442,6 +476,8 @@ We were careful about the things that tend to go wrong with tools like this:
 * The settings tool and installer reject invalid settings outright.
 * Values read from the user's own registry are treated as untrusted. Only `https://` site addresses are ever opened, and only a file called `OneDrive.exe` is ever started.
 * On shared Remote Desktop hosts, one user can't stop another user's alerts. Each session's "already running" marker lives in that session's own private namespace.
+* The status snapshot each agent writes is in the user's own hive, so the service treats it as untrusted: size-capped, every field clamped, and the user name and SID taken from the session's token rather than from the snapshot.
+* The NinjaOne CLI is only ever run from its fixed path under `C:\ProgramData\NinjaRMMAgent`, never from the registry or `PATH`, and only if that path is a regular file.
 
 There's more in [SECURITY.md](SECURITY.md), including how to report a problem.
 
@@ -451,6 +487,17 @@ There's more in [SECURITY.md](SECURITY.md), including how to report a problem.
 * The automatic re-sync uses the same link SharePoint's **Sync** button does. OneDrive may ask the user to confirm, and a library in another organisation (as a guest) may need the user to sign in.
 * If someone moved their OneDrive folder outside their profile, problems there are reported but not fixed automatically.
 * Users can turn off notifications for apps in Windows. That doesn't affect these alerts, but if they close the user part, the service just starts it again.
+
+## Credits
+
+This project stands on other people's work, and they deserve the thanks:
+
+* **[Denis Mc Auliffe](https://github.com/denismcapple), [OneDriveHelper](https://github.com/denismcapple/OneDriveHelper).** The whole application: the service, the per-user agent, the popups, the orphaned-folder detection, the safe fix and the automatic restart. This fork adds the NinjaOne integration on top and keeps his MIT licence and copyright.
+* **[Kelvin Tegelaar](https://www.cyberdrain.com/), CyberDrain, "Monitoring with PowerShell: Monitoring OneDrive status for current logged on user".** The idea that an RMM should show each user's OneDrive status in a custom field, and the approach of collecting it inside the user's session from a SYSTEM context. This project does what that script set out to do.
+* **[Rodney Viana](https://github.com/rodneyviana), [ODSyncService / OneDriveLib](https://github.com/rodneyviana/ODSyncService).** The original library for reading OneDrive's sync state that the CyberDrain script was built on.
+* **[Jos Lieben](https://www.lieben.nu/), [JSolve](https://www.jsolve.nl/), `remediate-OneDriveHydration.ps1` and `repair-OneDrive.ps1`.** The method for telling a hung OneDrive from a healthy one: Windows 11's storage-provider status API, the Cloud Files provider status, and a download probe. On the roadmap for this project; see [docs/ROADMAP.md](docs/ROADMAP.md).
+
+No code from the PowerShell projects above is included here; the ideas are re-implemented in Go.
 
 ## Licence
 

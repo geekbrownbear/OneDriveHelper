@@ -45,16 +45,17 @@ func LogPath() string {
 }
 
 type Agent struct {
-	log     *log.Logger
-	ev      *elog.Log
-	ui      *popup.Manager
-	hive    onedrive.Hive
-	session uint32
-	profile string
-	appData string
-	user    string
-	sid     string
-	launch  func() error // starts OneDrive (replaceable in tests)
+	log      *log.Logger
+	ev       *elog.Log
+	ui       *popup.Manager
+	hive     onedrive.Hive
+	session  uint32
+	profile  string
+	appData  string
+	user     string
+	sid      string
+	fullName string       // DOMAIN\user, for the status export
+	launch   func() error // starts OneDrive (replaceable in tests)
 
 	// Status publishing (only used on the check goroutine).
 	lastFixDir       string
@@ -137,14 +138,15 @@ func Run(ctx context.Context, standalone bool, stopEvent string) error {
 	profile, _ := os.UserHomeDir()
 	sid, _ := winapi.CurrentUserSID()
 	a := &Agent{
-		log:     logx.Open(LogPath(), false),
-		ev:      elog.Open(),
-		hive:    onedrive.CurrentUserHive(),
-		session: session,
-		profile: profile,
-		appData: os.Getenv("LOCALAPPDATA"),
-		user:    os.Getenv("USERNAME"),
-		sid:     sid,
+		log:      logx.Open(LogPath(), false),
+		ev:       elog.Open(),
+		hive:     onedrive.CurrentUserHive(),
+		session:  session,
+		profile:  profile,
+		appData:  os.Getenv("LOCALAPPDATA"),
+		user:     os.Getenv("USERNAME"),
+		sid:      sid,
+		fullName: winapi.CurrentUserName(),
 	}
 	defer a.ev.Close()
 	if a.ui, err = popup.Start(); err != nil {
@@ -313,7 +315,7 @@ func (a *Agent) tick(cfg config.Config, now time.Time) {
 	a.mu.Unlock()
 	// Publish for the service (and NinjaOne) even when checks are disabled,
 	// so the machine report never shows a stale user.
-	a.publish(buildSnapshot(winapi.CurrentUserName(), a.sid, s, a.state(), a.lastFix(cfg), now), now)
+	a.publish(buildSnapshot(a.fullName, a.sid, s, a.state(), a.lastFix(cfg), now), now)
 	a.updateTray(cfg, s)
 }
 

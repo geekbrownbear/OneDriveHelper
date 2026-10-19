@@ -29,13 +29,42 @@ var layout = [][]struct {
 	{
 		{"Branding && support", []string{"CompanyName", "SupportName", "SupportEmail", "SupportPhone", "SupportURL", "SupportEmailMethod", "AccentColor"}},
 		{"Alert text (leave blank for the built-in wording)", []string{"NotRunningMessage", "OrphanMessage"}},
-		{"NinjaOne", []string{"NinjaEnabled", "NinjaFieldStatus", "NinjaFieldHealth", "NinjaFieldStaleCount", "NinjaFieldLastReport", "NinjaPushMinutes", "NinjaConfigField"}},
+		{"General", []string{"TrayIconEnabled", "PopupSound", "CheckIntervalSeconds", "AgentWatchdogSeconds"}},
 	},
 	{
 		{"OneDrive running check", []string{"OneDriveCheckEnabled", "OneDriveMissingGraceSeconds", "AutoRestartEnabled", "AutoRestartAttempts", "IgnoreOptions"}},
 		{"Library sync check", []string{"OrphanCheckEnabled", "RemediationEnabled", "BackupRoot", "FreeSpaceMarginMB"}},
-		{"General", []string{"TrayIconEnabled", "PopupSound", "CheckIntervalSeconds", "AgentWatchdogSeconds"}},
+		{"NinjaOne", []string{"NinjaEnabled", "NinjaFieldStatus", "NinjaFieldHealth", "NinjaFieldStaleCount", "NinjaFieldLastReport", "NinjaPushMinutes", "NinjaConfigField"}},
 	},
+}
+
+// contentHeight is the height of the tallest column of groups, using the
+// same metrics as build, so the window grows with the layout.
+func (f *form) contentHeight() int32 {
+	rowH, checkH, multiH := f.s(31), f.s(26), f.s(64)
+	var tallest int32
+	for _, groups := range layout {
+		var y int32
+		for _, g := range groups {
+			inner := f.s(24)
+			for _, name := range g.fields {
+				fd := f.fields[name]
+				switch {
+				case fd.Type == reflect.Bool:
+					inner += checkH + f.s(2)
+				case fd.Kind == "multiline":
+					inner += multiH + f.s(8)
+				default:
+					inner += rowH
+				}
+			}
+			y += inner + f.s(4) + f.s(16)
+		}
+		if y > tallest {
+			tallest = y
+		}
+	}
+	return tallest
 }
 
 // Command IDs.
@@ -98,7 +127,8 @@ func Run(file string) error {
 		return errors.New("RegisterClassEx failed")
 	}
 
-	w, h := f.s(1000), f.s(660)
+	// Width is fixed; height follows the layout (columns + help/status lines + buttons).
+	w, h := f.s(1000), f.s(16)+f.contentHeight()+f.s(52)+f.s(32)+f.s(16)
 	if len(config.PolicyOverrides()) > 0 {
 		h += f.s(40)
 	}

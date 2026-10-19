@@ -43,7 +43,7 @@ Admin commands (run from an elevated prompt):
   ninja check             Show whether the NinjaOne agent's command-line tool is usable
 
 Diagnostics (run as the user to check):
-  status [--json]         Show the machine status the service reports to NinjaOne
+  status [--json|--html]  Show the machine status the service reports to NinjaOne
   check                   Show OneDrive status and orphaned library folders
   remediate --dry-run     Show what the fix would do (no changes)
   version
@@ -167,6 +167,7 @@ func configCmd(args []string) error {
 func statusCmd(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "print the raw status.json")
+	asHTML := fs.Bool("html", false, "print the HTML table for the NinjaOne WYSIWYG field")
 	_ = fs.Parse(args)
 	if *asJSON {
 		b, err := os.ReadFile(service.StatusFile())
@@ -178,6 +179,10 @@ func statusCmd(args []string) error {
 	}
 	r, err := service.ReadReport()
 	if err != nil {
+		return err
+	}
+	if *asHTML {
+		_, err = fmt.Print(status.RenderHTML(r, time.Local))
 		return err
 	}
 	return status.WriteTable(os.Stdout, r)
