@@ -63,11 +63,37 @@ type Config struct {
 	PopupSound           bool `reg:"PopupSound" def:"1" label:"Play a sound when a popup appears" help:"Play the Windows warning sound when an alert popup appears."`
 	CheckIntervalSeconds int  `reg:"CheckIntervalSeconds" def:"60" min:"10" max:"3600" label:"Check every (seconds)" help:"How often the user agent runs its checks."`
 	AgentWatchdogSeconds int  `reg:"AgentWatchdogSeconds" def:"30" min:"5" max:"3600" label:"Service watchdog (seconds)" help:"How often the service makes sure each user's agent is running."`
+
+	// NinjaOne
+	NinjaEnabled         bool   `reg:"NinjaEnabled" def:"1" label:"Report to NinjaOne" help:"Write the machine's OneDrive status to NinjaOne custom fields through the NinjaOne agent's command-line tool (ninjarmm-cli.exe). Nothing happens on PCs without the NinjaOne agent."`
+	NinjaFieldStatus     string `reg:"NinjaFieldStatus" def:"ODErrors" label:"Status field (WYSIWYG)" help:"Custom field that receives the per-user status table as HTML. Blank = don't set it."`
+	NinjaFieldHealth     string `reg:"NinjaFieldHealth" def:"ODHealth" label:"Health field (dropdown)" help:"Custom field that receives Healthy, Warning, Critical, Stale or NoUser. Create it as a dropdown with exactly those options. Blank = don't set it."`
+	NinjaFieldStaleCount string `reg:"NinjaFieldStaleCount" def:"ODStaleFolders" label:"Stale folder count field (integer)" help:"Custom field that receives the number of library folders that stopped syncing (all users). A condition on 'greater than 0' opens the ticket. Blank = don't set it."`
+	NinjaFieldLastReport string `reg:"NinjaFieldLastReport" def:"ODLastReport" label:"Last report field (date/time)" help:"Custom field that receives the time of the last report, so a condition can catch PCs that stop reporting. Blank = don't set it."`
+	NinjaPushMinutes     int    `reg:"NinjaPushMinutes" def:"60" min:"5" max:"1440" label:"Report at least every (minutes)" help:"The fields are updated whenever the status changes, and at least this often."`
+	NinjaConfigField     string `reg:"NinjaConfigField" def:"ODHelperConfig" label:"Settings field" help:"Custom field (usually at organisation level) holding a settings file in JSON, as exported by the settings tool. The service applies it when it changes. Blank = don't read settings from NinjaOne."`
 }
 
 func (c Config) CheckInterval() time.Duration { return secs(c.CheckIntervalSeconds, 10) }
 func (c Config) OneDriveGrace() time.Duration { return secs(c.OneDriveMissingGraceSeconds, 0) }
 func (c Config) Watchdog() time.Duration      { return secs(c.AgentWatchdogSeconds, 5) }
+func (c Config) NinjaPush() time.Duration     { return mins(c.NinjaPushMinutes) }
+
+var fieldName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,99}$`)
+
+// NinjaFields lists the configured custom field names with their purpose,
+// skipping blank ones.
+func (c Config) NinjaFields() map[string]string {
+	out := map[string]string{}
+	for _, f := range []struct{ purpose, name string }{
+		{"status", c.NinjaFieldStatus}, {"health", c.NinjaFieldHealth}, {"staleCount", c.NinjaFieldStaleCount},
+		{"lastReport", c.NinjaFieldLastReport}, {"config", c.NinjaConfigField}} {
+		if n := strings.TrimSpace(f.name); n != "" {
+			out[f.purpose] = n
+		}
+	}
+	return out
+}
 
 // Title is the window/popup title: "<Company> - OneDrive Helper".
 func (c Config) Title() string {
@@ -237,6 +263,12 @@ func (c Config) Validate() error {
 	}
 	if b := c.BackupDir(`C:\Users\user`); strings.TrimSpace(c.BackupRoot) == "" || !filepath.IsAbs(b) || len(b) <= 3 {
 		errs = append(errs, fmt.Errorf("BackupRoot must be an absolute folder (or start with {Profile}), got %q", c.BackupRoot))
+	}
+	for name, val := range map[string]string{"NinjaFieldStatus": c.NinjaFieldStatus, "NinjaFieldHealth": c.NinjaFieldHealth,
+		"NinjaFieldStaleCount": c.NinjaFieldStaleCount, "NinjaFieldLastReport": c.NinjaFieldLastReport, "NinjaConfigField": c.NinjaConfigField} {
+		if v := strings.TrimSpace(val); v != "" && !fieldName.MatchString(v) {
+			errs = append(errs, fmt.Errorf("%s must be a NinjaOne custom field name (letters, digits, underscore), got %q", name, val))
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -527,6 +559,11 @@ func ParseFile(path string, base Config) (Config, []string, error) {
 	if err != nil {
 		return base, nil, err
 	}
+	return ParseBytes(b, base)
+}
+
+// ParseBytes parses JSON settings over base without validating them.
+func ParseBytes(b []byte, base Config) (Config, []string, error) {
 	b = bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")) // tolerate a UTF-8 BOM (Notepad)
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(b, &raw); err != nil {
@@ -565,4 +602,14 @@ func Import(path string) error {
 		return err
 	}
 	return Save(c) // Save validates
+}
+
+// ImportBytes is Import for settings already in memory (e.g. read from a
+// NinjaOne custom field). It returns the names of the settings present.
+func ImportBytes(b []byte) ([]string, error) {
+	c, present, err := ParseBytes(b, LoadStored())
+	if err != nil {
+		return nil, err
+	}
+	return present, Save(c)
 }

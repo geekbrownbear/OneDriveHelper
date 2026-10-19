@@ -30,6 +30,10 @@ const (
 type sessionState struct {
 	lastLaunch time.Time
 	failures   int // consecutive launches where the agent died quickly
+
+	sid, user     string // resolved lazily from the session's token
+	sidErrLogged  bool
+	snapErrLogged bool
 }
 
 type handler struct {
@@ -39,6 +43,17 @@ type handler struct {
 	sessions  map[uint32]*sessionState
 	stopName  string         // per-service-instance event name passed to agents
 	stopEvent windows.Handle // signalled when the service stops so agents exit
+	started   time.Time
+
+	// Status export and NinjaOne sync state.
+	writeErrLogged     bool
+	ninjaMissingLogged bool
+	ninjaErrLogged     bool
+	lastFingerprint    string
+	lastPush, lastPull time.Time
+	pushNotBefore      time.Time
+	configHash         string   // of the NinjaOne settings field last applied
+	notes              []string // machine-level remarks for the report
 }
 
 // createStopEvent creates a uniquely named event that agents (any
@@ -84,6 +99,7 @@ func Run() error {
 
 func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	status <- svc.Status{State: svc.StartPending}
+	h.started = time.Now()
 	h.log.Printf("service %s starting; agent %s", version.Version, h.agentExe)
 	h.ev.Info(elog.ServiceStarted, "OneDrive Helper service "+version.Version+" started.")
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptSessionChange}
@@ -96,6 +112,7 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 		case <-tick.C:
 			cfg = config.Load()
 			h.reconcile()
+			h.publishStatus(cfg)
 			tick.Reset(cfg.Watchdog())
 		case c := <-req:
 			switch c.Cmd {

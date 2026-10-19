@@ -201,6 +201,7 @@ func Uninstall(purge bool, logf func(string, ...any)) error {
 		logf("Service not installed")
 	}
 	_ = elog.Remove()
+	RemoveStatus() // so an RMM reads "not installed" rather than a frozen status
 	if purge {
 		_ = deleteTree(registry.LOCAL_MACHINE, config.KeyPath)
 		logf("Configuration removed")

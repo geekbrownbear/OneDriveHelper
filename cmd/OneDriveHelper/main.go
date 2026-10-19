@@ -2,18 +2,22 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"golang.org/x/sys/windows/svc"
 
 	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/ninja"
 	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
 	"github.com/geekbrownbear/OneDriveHelper/internal/remediate"
 	"github.com/geekbrownbear/OneDriveHelper/internal/service"
+	"github.com/geekbrownbear/OneDriveHelper/internal/status"
 	"github.com/geekbrownbear/OneDriveHelper/internal/version"
 	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
@@ -34,7 +38,12 @@ Admin commands (run from an elevated prompt):
   config import <file>    Validate and import settings from JSON
   config validate <file>  Check a settings file without applying it
 
+  ninja push [--dry-run]  Send the machine status to the NinjaOne custom fields now
+  ninja pull [--dry-run]  Apply the settings held in the NinjaOne settings field now
+  ninja check             Show whether the NinjaOne agent's command-line tool is usable
+
 Diagnostics (run as the user to check):
+  status [--json]         Show the machine status the service reports to NinjaOne
   check                   Show OneDrive status and orphaned library folders
   remediate --dry-run     Show what the fix would do (no changes)
   version
@@ -90,6 +99,10 @@ func run(cmd string, args []string) error {
 		return service.Stop()
 	case "config":
 		return configCmd(args)
+	case "status":
+		return statusCmd(args)
+	case "ninja":
+		return ninjaCmd(args)
 	case "check":
 		return check()
 	case "remediate":
@@ -149,6 +162,121 @@ func configCmd(args []string) error {
 		return config.Import(args[1])
 	}
 	return fmt.Errorf("unknown config command %q", args[0])
+}
+
+func statusCmd(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	asJSON := fs.Bool("json", false, "print the raw status.json")
+	_ = fs.Parse(args)
+	if *asJSON {
+		b, err := os.ReadFile(service.StatusFile())
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(b)
+		return err
+	}
+	r, err := service.ReadReport()
+	if err != nil {
+		return err
+	}
+	return status.WriteTable(os.Stdout, r)
+}
+
+func ninjaCmd(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: ninja push|pull|check")
+	}
+	cfg := config.Load()
+	sub := strings.ToLower(args[0])
+	fs := flag.NewFlagSet("ninja "+sub, flag.ExitOnError)
+	dry := fs.Bool("dry-run", false, "show what would be sent or applied without doing it")
+	_ = fs.Parse(args[1:])
+	cli, cliErr := ninja.Find()
+	switch sub {
+	case "check":
+		if cliErr != nil {
+			return cliErr
+		}
+		fmt.Printf("NinjaOne CLI: %s\nReporting enabled: %v\nFields: %v\nPush at least every: %s\n", cli.Path, cfg.NinjaEnabled, cfg.NinjaFields(), cfg.NinjaPush())
+		if !winapi.IsElevated() {
+			fmt.Println("Note: ninjarmm-cli only works for SYSTEM (and sometimes administrators); the service runs as SYSTEM.")
+		}
+		return nil
+	case "push":
+		r, err := service.ReadReport()
+		if err != nil {
+			return err
+		}
+		if *dry {
+			fmt.Printf("Would set %d field(s) from %s (health %s, %d folder(s) not syncing):\n", len(cfg.NinjaFields())-boolToInt(cfg.NinjaConfigField != ""), service.StatusFile(), r.Health, r.StaleFolderCount)
+			for purpose, name := range cfg.NinjaFields() {
+				if purpose != "config" {
+					fmt.Printf("  %-11s -> %s\n", purpose, name)
+				}
+			}
+			fmt.Println("\nHTML that would go to the status field:")
+			fmt.Println(status.RenderHTML(r, time.Local))
+			return nil
+		}
+		if cliErr != nil {
+			return cliErr
+		}
+		res, err := service.PushReport(context.Background(), cli, cfg, r)
+		for name, v := range res.Fields {
+			fmt.Printf("set %s = %s\n", name, v)
+		}
+		return err
+	case "pull":
+		if cliErr != nil {
+			return cliErr
+		}
+		name := cfg.NinjaFields()["config"]
+		if name == "" {
+			return fmt.Errorf("NinjaConfigField is blank; nothing to pull")
+		}
+		if *dry {
+			raw, err := cli.Get(context.Background(), name)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(raw) == "" {
+				fmt.Printf("Field %s is empty; local settings would be kept.\n", name)
+				return nil
+			}
+			c, present, err := config.ParseBytes([]byte(raw), config.LoadStored())
+			if err == nil {
+				err = c.Validate()
+			}
+			if err != nil {
+				return fmt.Errorf("field %s: %w", name, err)
+			}
+			fmt.Printf("Field %s holds valid settings for: %s\n%s\n", name, strings.Join(present, ", "), strings.TrimSpace(raw))
+			return nil
+		}
+		if err := needAdmin(); err != nil {
+			return err
+		}
+		res, err := service.PullConfig(context.Background(), cli, cfg, "")
+		if err != nil {
+			return err
+		}
+		switch {
+		case !res.Found:
+			fmt.Printf("Field %s is empty; local settings kept.\n", name)
+		default:
+			fmt.Printf("Applied %d setting(s) from field %s: %s\n", len(res.Applied), name, strings.Join(res.Applied, ", "))
+		}
+		return nil
+	}
+	return fmt.Errorf("unknown ninja command %q (push, pull or check)", sub)
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func check() error {

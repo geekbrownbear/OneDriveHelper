@@ -29,6 +29,7 @@ var layout = [][]struct {
 	{
 		{"Branding && support", []string{"CompanyName", "SupportName", "SupportEmail", "SupportPhone", "SupportURL", "SupportEmailMethod", "AccentColor"}},
 		{"Alert text (leave blank for the built-in wording)", []string{"NotRunningMessage", "OrphanMessage"}},
+		{"NinjaOne", []string{"NinjaEnabled", "NinjaFieldStatus", "NinjaFieldHealth", "NinjaFieldStaleCount", "NinjaFieldLastReport", "NinjaPushMinutes", "NinjaConfigField"}},
 	},
 	{
 		{"OneDrive running check", []string{"OneDriveCheckEnabled", "OneDriveMissingGraceSeconds", "AutoRestartEnabled", "AutoRestartAttempts", "IgnoreOptions"}},

@@ -23,7 +23,7 @@ import (
 var ErrNotInstalled = errors.New("ninjarmm-cli.exe not found; is the NinjaOne agent installed?")
 
 // Timeout bounds every CLI call so a wedged agent never stalls the service.
-const Timeout = 60 * time.Second
+const Timeout = 30 * time.Second
 
 // MaxValueBytes is the most we send to one field. NinjaOne collapses fields
 // over 10,000 characters in the UI, and the WYSIWYG renderer in
