@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
 )
 
 // supportEML builds an unsent draft e-mail (.eml with "X-Unsent: 1", which

@@ -8,12 +8,12 @@ import (
 	"flag"
 	"os"
 
-	"github.com/denismcapple/OneDriveHelper/internal/agent"
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/logx"
-	"github.com/denismcapple/OneDriveHelper/internal/remediate"
-	"github.com/denismcapple/OneDriveHelper/internal/version"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/agent"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/logx"
+	"github.com/geekbrownbear/OneDriveHelper/internal/remediate"
+	"github.com/geekbrownbear/OneDriveHelper/internal/version"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 func main() {

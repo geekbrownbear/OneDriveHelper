@@ -1,4 +1,4 @@
-module github.com/denismcapple/OneDriveHelper
+module github.com/geekbrownbear/OneDriveHelper
 
 go 1.27.0
 

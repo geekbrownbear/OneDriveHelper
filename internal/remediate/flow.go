@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/elog"
-	"github.com/denismcapple/OneDriveHelper/internal/logx"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/elog"
+	"github.com/geekbrownbear/OneDriveHelper/internal/logx"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 // Exit codes of the elevated approval process.

@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/denismcapple/OneDriveHelper/internal/fsutil"
+	"github.com/geekbrownbear/OneDriveHelper/internal/fsutil"
 )
 
 // Orphan is a library folder that exists on disk but that OneDrive is no

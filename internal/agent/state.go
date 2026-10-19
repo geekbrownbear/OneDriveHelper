@@ -5,9 +5,9 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 // Ignore ("snooze") state is kept per alert under

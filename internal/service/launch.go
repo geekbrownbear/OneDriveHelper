@@ -6,7 +6,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/denismcapple/OneDriveHelper/internal/agent"
+	"github.com/geekbrownbear/OneDriveHelper/internal/agent"
 )
 
 // activeUserSessions returns the IDs of sessions with a logged-on user in the

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/denismcapple/OneDriveHelper/internal/fsutil"
+	"github.com/geekbrownbear/OneDriveHelper/internal/fsutil"
 )
 
 const sampleLine = `libraryScope = 2 aaaaaaaabbbb4cccdddd111122223333+2 5 "Internal" "Documents" 4 "https://contoso.sharepoint.com/sites/internal" "11111111-2222-4333-8444-555555555555" 0123456789ab4cdef012345678901234 fedcba98765443210fedcba987654321 13572468abcd4ef0a1b2c3d4e5f60718 1790167875 "C:\Users\jsmith\Contoso\Internal - Documents" 1 22222222-3333-4444-8555-666666666666  - 1407374883554875 24914674`

@@ -14,11 +14,11 @@ import (
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/elog"
-	"github.com/denismcapple/OneDriveHelper/internal/logx"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
-	"github.com/denismcapple/OneDriveHelper/internal/version"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/elog"
+	"github.com/geekbrownbear/OneDriveHelper/internal/logx"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/version"
 )
 
 // InstallDir is %ProgramFiles%\OneDriveHelper.

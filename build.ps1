@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$pkg = "github.com/denismcapple/OneDriveHelper/internal/version"
+$pkg = "github.com/geekbrownbear/OneDriveHelper/internal/version"
 $env:GOOS = "windows"
 $env:CGO_ENABLED = "0"
 

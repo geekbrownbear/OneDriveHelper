@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/denismcapple/OneDriveHelper/internal/fsutil"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/fsutil"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 const fileAttributeTagInfo = 9 // FILE_INFO_BY_HANDLE_CLASS.FileAttributeTagInfo

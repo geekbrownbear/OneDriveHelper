@@ -23,10 +23,10 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/denismcapple/OneDriveHelper/internal/agent"
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/popup"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/agent"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/popup"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 var (

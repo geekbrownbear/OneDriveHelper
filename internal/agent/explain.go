@@ -3,8 +3,8 @@ package agent
 import (
 	"strings"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
 )
 
 // Help topics shown by the "What does this mean?" link on each alert.

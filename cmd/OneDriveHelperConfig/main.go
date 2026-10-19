@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/configui"
-	"github.com/denismcapple/OneDriveHelper/internal/version"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/configui"
+	"github.com/geekbrownbear/OneDriveHelper/internal/version"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 const usage = `OneDrive Helper settings tool %s

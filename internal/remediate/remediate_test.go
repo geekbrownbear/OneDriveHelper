@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
 )
 
 func TestCopyAndDeleteTree(t *testing.T) {

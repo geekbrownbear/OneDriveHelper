@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/sys/windows/svc/eventlog"
 
-	"github.com/denismcapple/OneDriveHelper/internal/version"
+	"github.com/geekbrownbear/OneDriveHelper/internal/version"
 )
 
 // Event IDs.

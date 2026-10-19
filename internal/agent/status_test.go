@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
-	"github.com/denismcapple/OneDriveHelper/internal/popup"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/popup"
 )
 
 func sampleOrphans() []onedrive.Orphan {

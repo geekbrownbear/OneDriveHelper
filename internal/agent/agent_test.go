@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
 )
 
 func TestSnoozeState(t *testing.T) {

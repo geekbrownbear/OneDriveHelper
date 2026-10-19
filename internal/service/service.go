@@ -13,10 +13,10 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/elog"
-	"github.com/denismcapple/OneDriveHelper/internal/logx"
-	"github.com/denismcapple/OneDriveHelper/internal/version"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/elog"
+	"github.com/geekbrownbear/OneDriveHelper/internal/logx"
+	"github.com/geekbrownbear/OneDriveHelper/internal/version"
 )
 
 // Session change event types (WTS_*).

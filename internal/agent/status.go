@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
-	"github.com/denismcapple/OneDriveHelper/internal/popup"
-	"github.com/denismcapple/OneDriveHelper/internal/remediate"
-	"github.com/denismcapple/OneDriveHelper/internal/version"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/popup"
+	"github.com/geekbrownbear/OneDriveHelper/internal/remediate"
+	"github.com/geekbrownbear/OneDriveHelper/internal/version"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 const idStatus = "status"

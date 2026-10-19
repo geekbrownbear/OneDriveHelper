@@ -10,12 +10,12 @@ import (
 
 	"golang.org/x/sys/windows/svc"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
-	"github.com/denismcapple/OneDriveHelper/internal/remediate"
-	"github.com/denismcapple/OneDriveHelper/internal/service"
-	"github.com/denismcapple/OneDriveHelper/internal/version"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/remediate"
+	"github.com/geekbrownbear/OneDriveHelper/internal/service"
+	"github.com/geekbrownbear/OneDriveHelper/internal/version"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 const usage = `OneDrive Helper %s
