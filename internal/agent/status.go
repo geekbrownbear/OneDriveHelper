@@ -27,9 +27,13 @@ type Status struct {
 	MissingSince time.Time  // zero unless OneDrive has been seen missing
 	Snoozed      bool       // the "OneDrive not running" alert is ignored
 	OrphanSnooze SnoozeInfo // the "folders not syncing" alert is ignored
-	Orphans      []onedrive.Orphan
-	StaleNav     []onedrive.NavEntry // Explorer side-panel entries pointing at missing folders
-	Session      uint32
+	// NotRunningSnooze is the full ignore state behind Snoozed (for the status export).
+	NotRunningSnooze SnoozeInfo
+	// OneDriveVersion is the installed client version from the user's hive, if known.
+	OneDriveVersion string
+	Orphans         []onedrive.Orphan
+	StaleNav        []onedrive.NavEntry // Explorer side-panel entries pointing at missing folders
+	Session         uint32
 }
 
 // NotRunning reports a OneDrive outage worth telling the user about.
@@ -78,12 +82,15 @@ func (s Status) summary() string {
 // collect gathers a fresh status (no side effects).
 func (a *Agent) collect(cfg config.Config) Status {
 	accts := onedrive.Accounts(a.hive)
+	notRunning := Snooze(a.hive, idNotRunning, time.Now(), winapi.BootTime())
 	s := Status{
 		At: time.Now(), Accounts: accts, Configured: onedrive.AnyConfigured(accts),
 		Running: onedrive.OneDriveRunning(a.session), Updating: onedrive.UpdateInProgress(),
-		Snoozed:      Snoozed(a.hive, idNotRunning, time.Now(), winapi.BootTime()),
-		OrphanSnooze: Snooze(a.hive, idOrphans, time.Now(), winapi.BootTime()),
-		Session:      a.session,
+		Snoozed:          notRunning.Active,
+		NotRunningSnooze: notRunning,
+		OrphanSnooze:     Snooze(a.hive, idOrphans, time.Now(), winapi.BootTime()),
+		OneDriveVersion:  onedrive.ClientVersion(a.hive),
+		Session:          a.session,
 	}
 	if cfg.OrphanCheckEnabled {
 		in := onedrive.Gather(a.hive, a.profile)

@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 // Proc is a running process.
@@ -86,6 +87,25 @@ func OneDriveExe(h Hive) string {
 		}
 	}
 	return ""
+}
+
+// ClientVersion returns the OneDrive client version recorded in the user's
+// hive ("" if unknown).
+func ClientVersion(h Hive) string {
+	return h.String(`Software\Microsoft\OneDrive`, "Version")
+}
+
+// MachineClientVersion returns the per-machine OneDrive installation's
+// version from HKLM, or "" when OneDrive is installed per user only.
+func MachineClientVersion() (version string, perMachine bool) {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\OneDrive`, registry.QUERY_VALUE)
+	if err != nil {
+		return "", false
+	}
+	defer k.Close()
+	version, _, _ = k.GetStringValue("Version")
+	_, _, err = k.GetStringValue("CurrentVersionPath")
+	return version, err == nil
 }
 
 // LaunchOneDrive starts OneDrive for the current user in the background.

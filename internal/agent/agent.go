@@ -22,6 +22,7 @@ import (
 	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
 	"github.com/geekbrownbear/OneDriveHelper/internal/popup"
 	"github.com/geekbrownbear/OneDriveHelper/internal/remediate"
+	"github.com/geekbrownbear/OneDriveHelper/internal/status"
 	"github.com/geekbrownbear/OneDriveHelper/internal/version"
 	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
@@ -52,7 +53,13 @@ type Agent struct {
 	profile string
 	appData string
 	user    string
+	sid     string
 	launch  func() error // starts OneDrive (replaceable in tests)
+
+	// Status publishing (only used on the check goroutine).
+	lastFixDir       string
+	lastFixCached    *status.LastFix
+	publishErrLogged bool
 
 	mu           sync.Mutex // guards the fields below (buttons run on other goroutines)
 	missingSince time.Time
@@ -128,6 +135,7 @@ func Run(ctx context.Context, standalone bool, stopEvent string) error {
 	defer windows.CloseHandle(mu)
 
 	profile, _ := os.UserHomeDir()
+	sid, _ := winapi.CurrentUserSID()
 	a := &Agent{
 		log:     logx.Open(LogPath(), false),
 		ev:      elog.Open(),
@@ -136,6 +144,7 @@ func Run(ctx context.Context, standalone bool, stopEvent string) error {
 		profile: profile,
 		appData: os.Getenv("LOCALAPPDATA"),
 		user:    os.Getenv("USERNAME"),
+		sid:     sid,
 	}
 	defer a.ev.Close()
 	if a.ui, err = popup.Start(); err != nil {
@@ -302,6 +311,9 @@ func (a *Agent) tick(cfg config.Config, now time.Time) {
 	s.MissingSince = a.missingSince
 	a.last = s
 	a.mu.Unlock()
+	// Publish for the service (and NinjaOne) even when checks are disabled,
+	// so the machine report never shows a stale user.
+	a.publish(buildSnapshot(winapi.CurrentUserName(), a.sid, s, a.state(), a.lastFix(cfg), now), now)
 	a.updateTray(cfg, s)
 }
 
