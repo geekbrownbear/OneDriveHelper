@@ -205,7 +205,7 @@ func TestSanitizeClamps(t *testing.T) {
 		s.Orphans = append(s.Orphans, Orphan{Path: "C:\\p\r\n" + string(rune('a'+i%26)), Name: "n"})
 	}
 	s.Sanitize()
-	if n := len([]rune(s.User)); n != MaxString+1 || strings.ContainsAny(s.User, "\x00\x07") {
+	if n := len([]rune(s.User)); n != MaxString+3 || strings.ContainsAny(s.User, "\x00\x07") {
 		t.Errorf("user not clamped: len %d", n)
 	}
 	if len(s.Orphans) != MaxOrphans || !s.Truncated {
@@ -251,6 +251,20 @@ func TestRenderHTML(t *testing.T) {
 	for _, bad := range []string{"<script", "<Old>", "\n"} {
 		if strings.Contains(h, bad) {
 			t.Errorf("HTML contains %q", bad)
+		}
+	}
+	// The NinjaOne CLI reads stdin as ANSI: the HTML must be pure ASCII.
+	s.User = `CORP\Zoë Müller`
+	s.Orphans[0].Path = `C:\Users\zoë\Übersicht – Documents`
+	h = RenderHTML(eval(user("z", s)), time.UTC)
+	for i := 0; i < len(h); i++ {
+		if h[i] >= 0x80 {
+			t.Fatalf("non-ASCII byte in HTML at %d: %q", i, h[i-10:i+10])
+		}
+	}
+	for _, want := range []string{"Zo&#235; M&#252;ller", "&#220;bersicht &#8211; Documents", "&ndash;"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("HTML lacks %q", want)
 		}
 	}
 	empty := RenderHTML(eval(), time.UTC)

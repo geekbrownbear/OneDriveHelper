@@ -15,6 +15,36 @@ const MaxHTMLBytes = 60 << 10
 
 const timeFmt = "2006-01-02 15:04"
 
+// dash is the "nothing here" marker. The NinjaOne CLI reads stdin as the
+// system ANSI code page, so the HTML must be pure ASCII: entities, never
+// raw non-ASCII characters.
+const dash = "&ndash;"
+
+// escape HTML-escapes s and turns every non-ASCII rune into a numeric
+// entity, so user names and paths survive the CLI's ANSI stdin.
+func escape(s string) string {
+	s = html.EscapeString(s)
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x80 {
+			b.WriteRune(r)
+		} else {
+			fmt.Fprintf(&b, "&#%d;", r)
+		}
+	}
+	return b.String()
+}
+
 // Colours for the health column and row tint.
 var healthColour = map[Health]string{
 	Healthy:  "#2e7d32",
@@ -39,11 +69,11 @@ func RenderHTML(r Report, loc *time.Location) string {
 	if loc == nil {
 		loc = r.GeneratedAt.Location()
 	}
-	e := html.EscapeString
+	e := escape
 	ts := func(t time.Time) string { return e(t.In(loc).Format(timeFmt)) }
 	tsp := func(t *time.Time) string {
 		if t == nil {
-			return "–"
+			return dash
 		}
 		return ts(*t)
 	}
@@ -111,7 +141,7 @@ func renderRow(u User, loc *time.Location, td string, e func(string) string, tsp
 	s := u.Snapshot
 	if s == nil || u.Agent != AgentOK {
 		for i := 0; i < 6; i++ {
-			cell("–")
+			cell(dash)
 		}
 		cell(tsp(u.UpdatedAt))
 		b.WriteString(`</tr>`)
@@ -148,7 +178,7 @@ func renderRow(u User, loc *time.Location, td string, e func(string) string, tsp
 		}
 		acc = append(acc, fmt.Sprintf("%s (%s)", e(label), plural(len(a.Libraries), "library")))
 	}
-	cell(or(strings.Join(acc, "<br>"), "–"))
+	cell(or(strings.Join(acc, "<br>"), dash))
 
 	// Folders not syncing
 	var orphans []string
@@ -180,10 +210,10 @@ func renderRow(u User, loc *time.Location, td string, e func(string) string, tsp
 		}
 		ig = append(ig, e(label)+" "+until)
 	}
-	cell(or(strings.Join(ig, "<br>"), "–"))
+	cell(or(strings.Join(ig, "<br>"), dash))
 
 	// Auto-restart
-	ar := "–"
+	ar := dash
 	if s.AutoRestart.Attempts > 0 || s.AutoRestart.Last != nil {
 		ar = fmt.Sprintf("%s<br>last %s", plural(s.AutoRestart.Attempts, "attempt"), tsp(s.AutoRestart.Last))
 		if s.AutoRestart.GaveUp {
@@ -193,7 +223,7 @@ func renderRow(u User, loc *time.Location, td string, e func(string) string, tsp
 	cell(ar)
 
 	// Last fix
-	fix := "–"
+	fix := dash
 	if f := s.LastFix; f != nil {
 		verdict := `<span style="color:#2e7d32">OK</span>`
 		if !f.OK {

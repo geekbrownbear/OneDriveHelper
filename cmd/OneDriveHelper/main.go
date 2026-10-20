@@ -203,9 +203,33 @@ func ninjaCmd(args []string) error {
 		if cliErr != nil {
 			return cliErr
 		}
-		fmt.Printf("NinjaOne CLI: %s\nReporting enabled: %v\nFields: %v\nPush at least every: %s\n", cli.Path, cfg.NinjaEnabled, cfg.NinjaFields(), cfg.NinjaPush())
+		fmt.Printf("NinjaOne CLI: %s\nReporting enabled: %v\nPush at least every: %s\nFields:\n", cli.Path, cfg.NinjaEnabled, cfg.NinjaPush())
+		for _, purpose := range []string{"status", "health", "staleCount", "lastReport", "config"} {
+			if name, ok := cfg.NinjaFields()[purpose]; ok {
+				fmt.Printf("  %-11s %s\n", purpose, name)
+			}
+		}
+		if health := cfg.NinjaFields()["health"]; health != "" {
+			opts, err := cli.Options(context.Background(), health)
+			switch {
+			case err != nil:
+				fmt.Printf("Dropdown options of %s: not readable here (%v)\n", health, err)
+			case len(opts) == 0:
+				fmt.Printf("Dropdown options of %s: none; create Healthy, Warning, Critical, Stale, NoUser and NotInstalled\n", health)
+			default:
+				fmt.Printf("Dropdown options of %s:", health)
+				for _, h := range status.AllHealth {
+					if _, ok := opts[string(h)]; ok {
+						fmt.Printf(" %s", h)
+					} else {
+						fmt.Printf(" %s(MISSING)", h)
+					}
+				}
+				fmt.Println()
+			}
+		}
 		if !winapi.IsElevated() {
-			fmt.Println("Note: ninjarmm-cli only works for SYSTEM (and sometimes administrators); the service runs as SYSTEM.")
+			fmt.Println("Note: ninjarmm-cli only works for SYSTEM; run this from a NinjaOne remote shell to see field details. The service runs as SYSTEM.")
 		}
 		return nil
 	case "push":

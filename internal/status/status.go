@@ -277,7 +277,7 @@ func clamp(s string) string {
 			continue
 		}
 		if n++; n > MaxString {
-			b.WriteString("…")
+			b.WriteString("...")
 			break
 		}
 		b.WriteRune(r)

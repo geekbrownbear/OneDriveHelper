@@ -33,9 +33,11 @@ The service also *reads* one field, `ODHelperConfig`, so branding and support co
 | `ODHealth` | OneDrive Health | Dropdown | Technician: Read &nbsp;·&nbsp; Scripts: Read/Write | `Healthy`, `Warning`, `Critical`, `Stale`, `NoUser`, `NotInstalled` |
 | `ODStaleFolders` | OneDrive Stale Folders | Integer | Technician: Read &nbsp;·&nbsp; Scripts: Read/Write | Number of library folders that stopped syncing, all users |
 | `ODLastReport` | OneDrive Last Report | Date/Time | Technician: Read &nbsp;·&nbsp; Scripts: Read/Write | When the service last reported |
-| `ODHelperConfig` | OneDrive Helper Settings | Multi-line text, **organization** scope | Technician: Read/Write &nbsp;·&nbsp; Scripts: Read | Settings JSON for that customer (see step 2) |
+| `ODHelperConfig` | OneDrive Helper Settings | Multi-line text, scope **Organization and Device** | Technician: Read/Write &nbsp;·&nbsp; Scripts: Read | Settings JSON for that customer (see step 2) |
 
-Dropdown options for `ODHealth`, exactly as written: `Healthy`, `Warning`, `Critical`, `Stale`, `NoUser`, `NotInstalled`. The service sends the first five; the uninstall script sets `NotInstalled`.
+Dropdown options for `ODHealth`, exactly as written: `Healthy`, `Warning`, `Critical`, `Stale`, `NoUser`, `NotInstalled`. The service sends the first five; the uninstall script sets `NotInstalled`. The service looks the option's GUID up with `ninjarmm-cli options ODHealth` before setting it, so a missing option shows up in `service.log` as "dropdown ODHealth has no option ...".
+
+`ODHelperConfig` must be created with **both** the Organization and the Device scope ticked. A device reads the closest value set for it, walking device → end user → location → organization, so a field that only exists at organization scope is invisible to `ninjarmm-cli get` on the device and the service sees it as empty. With both scopes, you set the value once on the organization and every device in it inherits it; a device-level value, if you ever set one, wins for that device.
 
 What the values mean:
 
@@ -49,7 +51,7 @@ What the values mean:
 
 *Scripts: Read/Write* on the device fields is what lets `ninjarmm-cli` write them. Without it, `set` fails and the service logs the error to `C:\ProgramData\OneDriveHelper\service.log`.
 
-> **Organization-scope reading.** The service reads `ODHelperConfig` with `ninjarmm-cli get ODHelperConfig` on the device. Confirm on one PC that this returns the organization-level value (run `OneDriveHelper.exe ninja pull --dry-run` from a SYSTEM shell). If your tenant doesn't resolve organization fields from a device, create `ODHelperConfig` at device scope instead and fill it from a policy or script, or put the settings in the install script's `settingsJson` variable.
+> Check it on one PC: `OneDriveHelper.exe ninja pull --dry-run` from a NinjaOne remote shell prints the JSON the device sees. "Field ODHelperConfig is empty" with content set on the organization means the field is missing the Device scope or the Scripts: Read permission.
 
 ## 2. Put each customer's settings in `ODHelperConfig`
 
@@ -118,7 +120,7 @@ Event-log conditions still work if you want an instant alert as well: source `On
 From a NinjaOne remote shell (which runs as SYSTEM) or from an elevated prompt on the device:
 
 ```
-"C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja check          # finds ninjarmm-cli, shows the field names
+"C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja check          # finds ninjarmm-cli, lists the fields and the ODHealth options
 "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" status               # the table the service built
 "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja push --dry-run # the exact HTML it would send
 "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja push           # send now (SYSTEM only)

@@ -27,15 +27,23 @@ func PushReport(ctx context.Context, cli *ninja.CLI, cfg config.Config, r status
 	res := PushResult{Fields: map[string]string{}}
 	fields := cfg.NinjaFields()
 	var errs []error
-	set := func(purpose, value string, long bool) {
+	const (
+		short = iota
+		long
+		dropdown
+	)
+	set := func(purpose, value string, kind int) {
 		name, ok := fields[purpose]
 		if !ok {
 			return
 		}
 		var err error
-		if long {
+		switch kind {
+		case long:
 			err = cli.SetStdin(ctx, name, value)
-		} else {
+		case dropdown:
+			err = cli.SetDropdown(ctx, name, value)
+		default:
 			err = cli.Set(ctx, name, value)
 		}
 		if err != nil {
@@ -44,15 +52,15 @@ func PushReport(ctx context.Context, cli *ninja.CLI, cfg config.Config, r status
 		}
 		shown := value
 		if len(shown) > 80 {
-			shown = shown[:80] + fmt.Sprintf("… (%d bytes)", len(value))
+			shown = shown[:80] + fmt.Sprintf("... (%d bytes)", len(value))
 		}
 		res.Fields[name] = shown
 	}
-	set("health", string(r.Health), false)
-	set("staleCount", strconv.Itoa(r.StaleFolderCount), false)
-	set("status", status.RenderHTML(r, time.Local), true)
+	set("health", string(r.Health), dropdown)
+	set("staleCount", strconv.Itoa(r.StaleFolderCount), short)
+	set("status", status.RenderHTML(r, time.Local), long)
 	// Date/time fields take Unix seconds.
-	set("lastReport", strconv.FormatInt(r.GeneratedAt.Unix(), 10), false)
+	set("lastReport", strconv.FormatInt(r.GeneratedAt.Unix(), 10), short)
 	return res, errors.Join(errs...)
 }
 

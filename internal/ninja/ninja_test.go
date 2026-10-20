@@ -20,6 +20,7 @@ func fakeCLI(t *testing.T) (*CLI, string) {
 	script := "#!/bin/sh\necho \"args: $*\" >> \"" + logFile + "\"\n" +
 		"if [ \"$2\" = \"--stdin\" ]; then echo \"stdin: $(cat)\" >> \"" + logFile + "\"; fi\n" +
 		"if [ \"$1\" = \"get\" ]; then printf 'value of %s\\r\\n' \"$2\"; fi\n" +
+		"if [ \"$1\" = \"options\" ]; then printf '11111111-aaaa-4bbb-8ccc-000000000001=Healthy\\r\\n22222222-aaaa-4bbb-8ccc-000000000002=Critical\\r\\n'; fi\n" +
 		"if [ \"$2\" = \"boom\" ]; then echo 'no such field' >&2; exit 3; fi\n"
 	path := filepath.Join(dir, "ninjarmm-cli")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -63,6 +64,25 @@ func TestSetGet(t *testing.T) {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("log lacks %q:\n%s", want, log)
 		}
+	}
+}
+
+func TestSetDropdown(t *testing.T) {
+	c, logFile := fakeCLI(t)
+	ctx := context.Background()
+	if err := c.SetDropdown(ctx, "ODHealth", "critical"); err != nil {
+		t.Fatal(err)
+	}
+	log, _ := os.ReadFile(logFile)
+	if !strings.Contains(string(log), "args: set ODHealth 22222222-aaaa-4bbb-8ccc-000000000002") {
+		t.Errorf("GUID not used:\n%s", log)
+	}
+	err := c.SetDropdown(ctx, "ODHealth", "Stale")
+	if err == nil || !strings.Contains(err.Error(), "options: Critical, Healthy") {
+		t.Errorf("missing option: %v", err)
+	}
+	if got := ParseOptions("  \r\nbad line\r\n=x\r\n"); len(got) != 0 {
+		t.Errorf("junk parsed: %v", got)
 	}
 }
 

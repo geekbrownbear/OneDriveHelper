@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -89,6 +90,57 @@ func (c *CLI) SetStdin(ctx context.Context, field, value string) error {
 	return err
 }
 
+// Options lists a dropdown field's options as name -> GUID ("options
+// <field>" prints one "GUID=Name" line per option).
+func (c *CLI) Options(ctx context.Context, field string) (map[string]string, error) {
+	if err := checkField(field); err != nil {
+		return nil, err
+	}
+	out, err := c.run(ctx, nil, "options", field)
+	if err != nil {
+		return nil, err
+	}
+	return ParseOptions(out), nil
+}
+
+// ParseOptions parses "GUID=Name" lines.
+func ParseOptions(out string) map[string]string {
+	opts := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		guid, name, ok := strings.Cut(line, "=")
+		if !ok || guid == "" || name == "" {
+			continue
+		}
+		opts[strings.TrimSpace(name)] = strings.TrimSpace(guid)
+	}
+	return opts
+}
+
+// SetDropdown selects an option of a dropdown field by name. NinjaOne wants
+// the option's GUID, so the options are looked up first; the name is matched
+// case-insensitively. If the options can't be listed, the name is sent as is.
+func (c *CLI) SetDropdown(ctx context.Context, field, option string) error {
+	opts, err := c.Options(ctx, field)
+	if err != nil {
+		if setErr := c.Set(ctx, field, option); setErr != nil {
+			return fmt.Errorf("%w (and listing its options failed: %v)", setErr, err)
+		}
+		return nil
+	}
+	for name, guid := range opts {
+		if strings.EqualFold(name, option) {
+			return c.Set(ctx, field, guid)
+		}
+	}
+	names := make([]string, 0, len(opts))
+	for name := range opts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return fmt.Errorf("dropdown %s has no option %q (options: %s)", field, option, strings.Join(names, ", "))
+}
+
 // Get reads a custom field. An unset field returns "" and no error.
 func (c *CLI) Get(ctx context.Context, field string) (string, error) {
 	if err := checkField(field); err != nil {
@@ -148,7 +200,7 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	if len(s) > 300 {
-		s = s[:300] + "…"
+		s = s[:300] + "..."
 	}
 	return s
 }
