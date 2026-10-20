@@ -306,6 +306,8 @@ If a user wants to keep a folder that OneDrive no longer syncs (a copy of an arc
 
 Ignored folders (and everything inside them) are never reported and never included in a fix. The list is machine-wide, under `HKLM\SOFTWARE\OneDriveHelper\IgnoredFolders`, so only administrators can change it, and it is shown at the bottom of the status table so it isn't forgotten. [`ninjaone/Ignore-OneDriveFolder.ps1`](ninjaone/Ignore-OneDriveFolder.ps1) wraps this for NinjaOne.
 
+Users can't put a folder on the list themselves, but they can ask: under every folder in the alert there is a small link, *I want to keep this folder - ask support to stop reporting it*. It warns that files in the folder are not backed up, then starts an e-mail to your support address with the folder path, the computer and user, a line for their reason, and the exact command for the technician. They only have to press Send. Event 4003 records the request.
+
 ### Other RMM tools
 
 Everything above except the custom-field push works anywhere: the event log, `status.json` and the registry key are there whatever runs the scripts. This generic install script works in Datto RMM, N-able, ConnectWise Automate, Atera, Kaseya, Intune platform scripts and anything else that can run PowerShell as SYSTEM. Fill in the version and copy the two checksums from that release's `SHA256SUMS.txt`. Paste the customer's settings into the JSON block.

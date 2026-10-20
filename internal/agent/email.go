@@ -40,7 +40,6 @@ func supportEML(c config.Config, addr string, s Status, report string) []byte {
 	plain.WriteString("\r\nDiagnostic details:\r\n\r\n" + report)
 
 	var h strings.Builder
-	h.WriteString(`<html><head><meta charset="utf-8"></head><body style="font-family:'Segoe UI',Calibri,Arial,sans-serif;font-size:11pt;color:#1f1f1f">`)
 	h.WriteString("<p>Hello,</p><p>OneDrive Helper on my computer reports a problem:</p><ul>")
 	for _, p := range problems {
 		h.WriteString("<li>" + html.EscapeString(p) + "</li>")
@@ -49,8 +48,15 @@ func supportEML(c config.Config, addr string, s Status, report string) []byte {
 	h.WriteString(`<pre style="font-family:Consolas,'Courier New',monospace;font-size:8pt;line-height:1.35;color:#444444;` +
 		`background:#f6f6f6;border:1px solid #dddddd;padding:8px;white-space:pre-wrap">`)
 	h.WriteString(html.EscapeString(strings.ReplaceAll(report, "\r\n", "\n")))
-	h.WriteString("</pre></body></html>")
+	h.WriteString("</pre>")
+	return emlDraft(addr, subject, plain.String(), h.String())
+}
 
+// emlDraft builds an unsent .eml (plain text + HTML body) addressed to addr.
+// htmlBody is the inside of <body>.
+func emlDraft(addr, subject, plain, htmlBody string) []byte {
+	htmlDoc := `<html><head><meta charset="utf-8"></head><body style="font-family:'Segoe UI',Calibri,Arial,sans-serif;font-size:11pt;color:#1f1f1f">` +
+		htmlBody + "</body></html>"
 	const boundary = "OneDriveHelper-boundary-7f3a9c"
 	var b strings.Builder
 	fmt.Fprintf(&b, "To: %s\r\n", addr)
@@ -58,7 +64,7 @@ func supportEML(c config.Config, addr string, s Status, report string) []byte {
 	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
 	b.WriteString("X-Unsent: 1\r\nMIME-Version: 1.0\r\n")
 	fmt.Fprintf(&b, "Content-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n", boundary)
-	for _, part := range []struct{ typ, body string }{{"text/plain", plain.String()}, {"text/html", h.String()}} {
+	for _, part := range []struct{ typ, body string }{{"text/plain", plain}, {"text/html", htmlDoc}} {
 		fmt.Fprintf(&b, "--%s\r\nContent-Type: %s; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n", boundary, part.typ)
 		enc := base64.StdEncoding.EncodeToString([]byte(part.body))
 		for len(enc) > 76 {

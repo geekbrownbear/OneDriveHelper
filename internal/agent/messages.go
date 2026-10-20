@@ -34,7 +34,12 @@ type Actions struct {
 	Fix         func()
 	Explain     func(topic string)
 	CopyDetails func()
+	// RequestIgnore asks support to stop monitoring one folder (the user
+	// wants to keep it). nil = no link under the folders.
+	RequestIgnore func(o onedrive.Orphan)
 }
+
+const ignoreLinkLabel = "I want to keep this folder - ask support to stop reporting it"
 
 func or(s, def string) string {
 	if strings.TrimSpace(s) == "" {
@@ -130,6 +135,12 @@ func orphanSpec(c config.Config, orphans []onedrive.Orphan, a Actions) popup.Spe
 		title = fmt.Sprintf("%d %s stopped syncing", len(orphans), many)
 	}
 	items, more := orphanItems(orphans, nil)
+	if a.RequestIgnore != nil {
+		for i := range items {
+			o := orphans[i]
+			items[i].Link, items[i].OnLink = ignoreLinkLabel, func() { a.RequestIgnore(o) }
+		}
+	}
 	footer := c.SupportContact()
 	if more != "" {
 		footer = more + "\n\n" + footer

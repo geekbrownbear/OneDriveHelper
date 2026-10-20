@@ -38,9 +38,12 @@ type Button struct {
 }
 
 // Item is one listed problem: a bold title, an optional path on its own
-// line in a smaller font, and an optional explanatory note.
+// line in a smaller font, an optional explanatory note, and an optional
+// small link under it (Link text; OnLink runs on its own goroutine).
 type Item struct {
 	Title, Path, Note string
+	Link              string
+	OnLink            func()
 }
 
 // Spec describes a card. Showing a Spec with an existing ID updates that card.

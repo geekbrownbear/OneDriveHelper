@@ -309,12 +309,15 @@ func serviceRunning() bool {
 
 func (a *Agent) actions() Actions {
 	return Actions{
-		Relaunch:    a.safe("restart OneDrive", a.relaunch),
-		Snooze:      func(alert, d string) { a.safe("ignore", func() { a.snooze(alert, d) })() },
-		Support:     a.safe("contact support", a.support),
-		Email:       a.safe("e-mail support", a.email),
-		Website:     a.safe("support website", a.website),
-		Fix:         a.safe("fix", a.fix),
+		Relaunch: a.safe("restart OneDrive", a.relaunch),
+		Snooze:   func(alert, d string) { a.safe("ignore", func() { a.snooze(alert, d) })() },
+		Support:  a.safe("contact support", a.support),
+		Email:    a.safe("e-mail support", a.email),
+		Website:  a.safe("support website", a.website),
+		Fix:      a.safe("fix", a.fix),
+		RequestIgnore: func(o onedrive.Orphan) {
+			a.safe("request ignore", func() { a.requestIgnore(o) })()
+		},
 		Explain:     func(topic string) { a.safe("explain", func() { a.explain(topic) })() },
 		CopyDetails: a.safe("copy details", a.copyDetails),
 	}
@@ -662,6 +665,9 @@ func ShowPreview(ui *popup.Manager, cfg config.Config, orphans []onedrive.Orphan
 		Email:    note("Send an e-mail to " + cfg.SupportEmailAddress()),
 		Website:  note("Visit the support website: " + cfg.SupportWebsite()),
 		Fix:      note("Fix (admin)"),
+		RequestIgnore: func(o onedrive.Orphan) {
+			note("Keep this folder: " + o.Path + " (starts an e-mail to support)")()
+		},
 		Explain: func(topic string) {
 			wg.Add(1)
 			defer wg.Done()

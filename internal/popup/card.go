@@ -61,10 +61,14 @@ type card struct {
 // helpHit is the hover/click index of the header help link.
 const helpHit = -2
 
+// Item links use indices below helpHit: linkHit(i) for item i.
+func linkHit(i int) int   { return -3 - i }
+func linkIndex(h int) int { return -3 - h }
+
 const helpLabel = "What does this mean?"
 
 // itemRects holds the laid-out parts of one Item.
-type itemRects struct{ title, path, note rect }
+type itemRects struct{ title, path, note, link rect }
 
 // layout measures text and positions everything for the current spec.
 func (c *card) layout() {
@@ -139,6 +143,11 @@ func (c *card) layout() {
 			_, h = measure(m.fonts.body, it.Note, inner-indent, dtWordBreak|dtEditControl)
 			r.note = rect{Left: pad + indent, Top: y + m.s(2), Right: pad + inner, Bottom: y + m.s(2) + h}
 			y += h + m.s(2)
+		}
+		if it.Link != "" && it.OnLink != nil {
+			w, h := measure(m.fonts.small, it.Link, inner-indent, dtSingleLine)
+			r.link = rect{Left: pad + indent, Top: y + m.s(2), Right: pad + indent + w, Bottom: y + m.s(2) + h}
+			y += h + m.s(4)
 		}
 		c.items[i] = r
 	}
@@ -275,6 +284,16 @@ func (c *card) paint(target uintptr) {
 			call(pSetTextColor, dc, colorBody)
 			drawText(dc, it.Note, &r.note, dtWordBreak|dtEditControl|dtNoPrefix)
 		}
+		if r.link.Right > r.link.Left {
+			linkColour, _ := accent(c.spec.Accent)
+			call(pSelectObject, dc, m.fonts.small)
+			call(pSetTextColor, dc, linkColour)
+			l := r.link
+			drawText(dc, it.Link, &l, dtSingleLine|dtNoPrefix)
+			if c.hover == linkHit(i) {
+				fill(dc, rect{Left: l.Left, Top: l.Bottom - m.s(1), Right: l.Right, Bottom: l.Bottom}, linkColour)
+			}
+		}
 	}
 	if c.spec.Footer != "" {
 		call(pSelectObject, dc, m.fonts.body)
@@ -323,6 +342,11 @@ func (c *card) hit(lParam uintptr) int {
 			return i
 		}
 	}
+	for i, it := range c.items {
+		if it.link.Right > it.link.Left && it.link.Contains(x, y) {
+			return linkHit(i)
+		}
+	}
 	return -1
 }
 
@@ -338,6 +362,15 @@ func (c *card) click(i int) {
 		if f := c.spec.OnHelp; f != nil {
 			go safeRun(f)
 		}
+		return
+	}
+	if i < helpHit {
+		if j := linkIndex(i); j >= 0 && j < len(c.spec.Items) && c.spec.Items[j].OnLink != nil {
+			go safeRun(c.spec.Items[j].OnLink)
+		}
+		return
+	}
+	if i < 0 || i >= len(c.spec.Buttons) {
 		return
 	}
 	b := c.spec.Buttons[i]

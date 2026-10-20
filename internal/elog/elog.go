@@ -33,6 +33,8 @@ const (
 	OneDriveStateUnknown = 3007
 	OrphanedLibraries    = 4001
 	OrphansResolved      = 4002
+	// IgnoreRequested: the user asked support to stop reporting a folder they want to keep.
+	IgnoreRequested = 4003
 	// RemediationStarted is the approval step's event (an admin approved a fix).
 	RemediationStarted = 5001
 	// RemediationCompleted: every folder of a fix was removed after backing it up.

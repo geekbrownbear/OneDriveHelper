@@ -113,7 +113,21 @@ With the Halo PSA integration, a condition that *resets* closes its ticket. Set 
 
 What the user sees when a folder stops syncing: a popup with the folder names and **Fix (admin)**. If they click it and approve the UAC prompt, the fix saves every locally stored file to `C:\Users\<user>\ODHelper\Saved\<date>\<Library>`, removes the dead folder and asks OneDrive to sync the library again. `ODStaleFolders` returns to 0 within a minute and the ticket resolves. If they ignore it, the ticket tells you to reach out. If the folder turns out to be something they still need and OneDrive has genuinely dropped the library, the fix is still the right answer: the files are kept in the `Saved` folder and the library is re-added.
 
-**When the user wants to keep the folder.** Sometimes the folder is a copy of an archived SharePoint site, or an old library the user keeps for reference, and the right answer is to leave it alone. Run `Ignore-OneDriveFolder.ps1` on the device with the `folder` path and a `note` (ticket number, who agreed). The folder disappears from the alert, the status and `ODStaleFolders` within a minute, so the ticket resolves, and it can never be picked up by a fix. The ignore list is machine-wide under `HKLM\SOFTWARE\OneDriveHelper\IgnoredFolders`, which only administrators can change, and it is listed at the bottom of the `ODErrors` table so it is never forgotten. Tick `remove` on the same script to report the folder again. From a remote shell the equivalent is `OneDriveHelper.exe ignore add|remove|list`.
+**When the user wants to keep the folder.** Sometimes the folder is a copy of an archived SharePoint site, or an old library the user keeps for reference, and the right answer is to leave it alone. The decision stays with a technician; the user can only ask:
+
+1. Under every folder in the alert there is a small link, *I want to keep this folder - ask support to stop reporting it*. Clicking it shows a warning (files in the folder are not backed up, nobody will be warned again, but keeping it can be a valid business need) with OK / Cancel.
+2. OK starts an e-mail to your support address (the same draft mechanism as **Contact support**) with the folder path, computer, user, a line for the user to say why they need it, and the exact NinjaOne script and command for the technician. The user adds the reason and presses Send. Event 4003 is logged. Nothing changes on the PC.
+3. The technician runs **Ignore OneDrive folder** on the device from NinjaOne, filling in `folder` and `note`.
+
+Add `Ignore-OneDriveFolder.ps1` once as a script (PowerShell, run as System) with these script variables, so it shows up on the device's **Run script** menu with a form:
+
+| Variable | Type | Required | Value |
+|---|---|---|---|
+| `folder` | String | Yes | Full path from the e-mail, e.g. `C:\Users\jsmith\Contoso\Archive - Documents` |
+| `note` | String | Recommended | Ticket number and who approved, e.g. `T12345 approved by J. Smith` |
+| `remove` | Checkbox | No | Tick to take the folder off the list (report it again) |
+
+The folder disappears from the alert, the status and `ODStaleFolders` within a minute, so the ticket resolves, and it can never be picked up by a fix. The ignore list is machine-wide under `HKLM\SOFTWARE\OneDriveHelper\IgnoredFolders`, which only administrators can change, and it is listed at the bottom of the `ODErrors` table so it is never forgotten. From a remote shell the equivalent is `OneDriveHelper.exe ignore add|remove|list`.
 
 Event-log conditions still work if you want an instant alert as well: source `OneDriveHelper`, IDs 3006 (restarts failed), 4001 (folders stopped syncing), 5003 (fix failed). The custom-field conditions are the ones that resolve themselves.
 
