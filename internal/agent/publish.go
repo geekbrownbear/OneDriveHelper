@@ -34,10 +34,11 @@ func (a *Agent) state() agentState {
 func buildSnapshot(user, sid string, s Status, st agentState, fix *status.LastFix, now time.Time) status.Snapshot {
 	snap := status.Snapshot{
 		Schema: status.Schema, User: user, SID: sid, Session: s.Session, AgentVersion: version.Version, At: now,
-		OneDrive: status.OneDriveState{Configured: s.Configured, Running: s.Running, Updating: s.Updating,
+		OneDrive: status.OneDriveState{Configured: s.Configured, Running: s.Running, Unknown: s.Unknown, Updating: s.Updating,
 			Alerting: st.outageLogged, Version: s.OneDriveVersion},
-		AutoRestart: status.AutoRestart{GaveUp: st.autoGaveUp},
-		LastFix:     fix,
+		AutoRestart:      status.AutoRestart{GaveUp: st.autoGaveUp},
+		LastFix:          fix,
+		InterruptedFixes: s.unfinished(),
 	}
 	if !s.Running && !st.missingSince.IsZero() {
 		t := st.missingSince
@@ -56,11 +57,8 @@ func buildSnapshot(user, sid string, s Status, st agentState, fix *status.LastFi
 	}
 	for _, o := range s.Orphans {
 		kind := "library"
-		switch {
-		case o.EmptyOrg:
+		if o.EmptyOrg {
 			kind = "emptyOrg"
-		case o.Personal:
-			kind = "personal"
 		}
 		snap.Orphans = append(snap.Orphans, status.Orphan{Path: o.Path, Name: o.DisplayName(), Kind: kind,
 			CanResync: o.CanResync(), SiteURL: o.WebURL, Protected: len(o.KnownFolders) > 0})

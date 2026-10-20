@@ -22,7 +22,8 @@ type Status struct {
 	At           time.Time
 	Accounts     []onedrive.Account
 	Configured   bool
-	Running      bool
+	Running      bool // last known state when Unknown is set
+	Unknown      bool // the process list could not be read
 	Updating     bool
 	MissingSince time.Time  // zero unless OneDrive has been seen missing
 	Snoozed      bool       // the "OneDrive not running" alert is ignored
@@ -34,14 +35,27 @@ type Status struct {
 	Orphans         []onedrive.Orphan
 	StaleNav        []onedrive.NavEntry // Explorer side-panel entries pointing at missing folders
 	Session         uint32
+	// Interrupted lists earlier fixes that did not finish (folders not where they were).
+	Interrupted []remediate.Interrupted
 }
 
 // NotRunning reports a OneDrive outage worth telling the user about.
-func (s Status) NotRunning() bool { return s.Configured && !s.Running && !s.Updating }
+func (s Status) NotRunning() bool { return s.Configured && !s.Running && !s.Updating && !s.Unknown }
+
+// unfinished counts interrupted fixes that are not still running.
+func (s Status) unfinished() int {
+	n := 0
+	for _, i := range s.Interrupted {
+		if !i.Running {
+			n++
+		}
+	}
+	return n
+}
 
 // Problems counts what needs attention.
 func (s Status) Problems() int {
-	n := len(s.Orphans)
+	n := len(s.Orphans) + s.unfinished()
 	if s.NotRunning() {
 		n++
 	}
@@ -50,7 +64,7 @@ func (s Status) Problems() int {
 
 func (s Status) severity() popup.Severity {
 	switch {
-	case len(s.Orphans) > 0:
+	case len(s.Orphans) > 0 || s.unfinished() > 0:
 		return popup.Critical
 	case s.NotRunning():
 		return popup.Warning
@@ -63,6 +77,9 @@ func (s Status) summary() string {
 	var parts []string
 	if s.NotRunning() {
 		parts = append(parts, "OneDrive is not running")
+	}
+	if s.unfinished() > 0 {
+		parts = append(parts, "an earlier fix did not finish")
 	}
 	switch n := len(s.Orphans); {
 	case n == 1:
@@ -85,7 +102,7 @@ func (a *Agent) collect(cfg config.Config) Status {
 	notRunning := Snooze(a.hive, idNotRunning, time.Now(), winapi.BootTime())
 	s := Status{
 		At: time.Now(), Accounts: accts, Configured: onedrive.AnyConfigured(accts),
-		Running: onedrive.OneDriveRunning(a.session), Updating: onedrive.UpdateInProgress(),
+		Updating:         onedrive.UpdateInProgress(),
 		Snoozed:          notRunning.Active,
 		NotRunningSnooze: notRunning,
 		OrphanSnooze:     Snooze(a.hive, idOrphans, time.Now(), winapi.BootTime()),
@@ -97,7 +114,14 @@ func (a *Agent) collect(cfg config.Config) Status {
 		s.Orphans = onedrive.FindOrphans(in, onedrive.OSFS)
 		s.StaleNav = onedrive.StaleNavEntries(a.hive, in, nil)
 	}
+	s.Interrupted = remediate.ListInterrupted(a.profile)
 	a.mu.Lock()
+	switch a.oneDriveState() {
+	case onedrive.StateRunning:
+		s.Running = true
+	case onedrive.StateUnknown:
+		s.Unknown, s.Running = true, a.last.Running // show the last known state
+	}
 	s.MissingSince = a.missingSince
 	a.mu.Unlock()
 	return s
@@ -108,6 +132,13 @@ func statusSpec(c config.Config, s Status, a Actions) popup.Spec {
 	switch {
 	case !s.Configured:
 		b.WriteString("OneDrive:  not set up for this user.")
+	case s.Unknown:
+		b.WriteString("OneDrive:  can't tell right now (the list of running programs could not be read). Last known: ")
+		if s.Running {
+			b.WriteString("running.")
+		} else {
+			b.WriteString("not running.")
+		}
 	case s.Running:
 		b.WriteString("OneDrive:  running.")
 	case s.Updating:
@@ -131,6 +162,12 @@ func statusSpec(c config.Config, s Status, a Actions) popup.Spec {
 		items, footer = orphanItems(s.Orphans, remediate.ResyncNote)
 		if s.OrphanSnooze.Active {
 			footer = strings.TrimSpace(footer + "\n\nThe alert for these folders is ignored " + s.OrphanSnooze.Describe() + ".")
+		}
+	}
+
+	for _, i := range s.Interrupted {
+		if !i.Running {
+			b.WriteString("\n\nAn earlier fix did not finish. These folders are not where they were:\n" + strings.TrimSpace(i.Text()))
 		}
 	}
 
@@ -176,8 +213,8 @@ func Report(c config.Config, s Status, logPath string) string {
 	fmt.Fprintf(&b, "Computer:   %s\r\nUser:       %s (session %d)\r\nVersion:    %s\r\nCompany:    %s\r\n",
 		host, winapi.CurrentUserName(), s.Session, version.Version, c.CompanyName)
 	fmt.Fprintf(&b, "Summary:    %s\r\n\r\n", s.summary())
-	fmt.Fprintf(&b, "OneDrive set up: %v   running: %v   updating: %v   'not running' alert ignored: %v   'folders' alert ignored: %v\r\n",
-		s.Configured, s.Running, s.Updating, s.Snoozed, s.OrphanSnooze.Active)
+	fmt.Fprintf(&b, "OneDrive set up: %v   running: %v (unknown: %v)   updating: %v   'not running' alert ignored: %v   'folders' alert ignored: %v\r\n",
+		s.Configured, s.Running, s.Unknown, s.Updating, s.Snoozed, s.OrphanSnooze.Active)
 	if !s.MissingSince.IsZero() {
 		fmt.Fprintf(&b, "Missing since: %s\r\n", s.MissingSince.Format(time.RFC3339))
 	}
@@ -196,6 +233,12 @@ func Report(c config.Config, s Status, logPath string) string {
 		fmt.Fprintf(&b, "  - %s\r\n    path:    %s\r\n    re-sync: %s\r\n", o.DisplayName(), o.Path, remediate.ResyncNote(o))
 		if o.WebURL != "" {
 			fmt.Fprintf(&b, "    site:    %s\r\n", o.WebURL)
+		}
+	}
+	if len(s.Interrupted) > 0 {
+		b.WriteString("\r\nUnfinished fixes:\r\n")
+		for _, i := range s.Interrupted {
+			b.WriteString(strings.ReplaceAll("  "+strings.TrimSpace(i.Text()), "\n", "\r\n  ") + "\r\n")
 		}
 	}
 	if len(s.StaleNav) > 0 {
@@ -221,18 +264,25 @@ func Report(c config.Config, s Status, logPath string) string {
 // sample data (used for visual checks).
 func PreviewStatus(ui *popup.Manager, c config.Config) {
 	s := Status{At: time.Now(), Configured: true, Running: true, Orphans: []onedrive.Orphan{
-		{Name: "OneDrive - Contoso Ltd", Path: `C:\Users\jsmith\OneDrive - Contoso Ltd`,
-			TenantRoot: `C:\Users\jsmith\OneDrive - Contoso Ltd`, Personal: true},
+		{Name: "Contoso Ltd", Path: `C:\Users\jsmith\Contoso Ltd`, TenantRoot: `C:\Users\jsmith\Contoso Ltd`, EmptyOrg: true},
 		{Name: "Bids Team - Documents", Path: `C:\Users\jsmith\Fabrikam\Bids Team - Documents`, TenantRoot: `C:\Users\jsmith\Fabrikam`},
 	}}
 	nop := Actions{Relaunch: func() {}, Snooze: func(string, string) {}, Support: func() {}, Email: func() {}, Website: func() {},
 		Fix: func() {}, Explain: func(string) {}, CopyDetails: func() {}}
-	ui.SetTray(popup.Tray{Tooltip: c.Title() + "\n" + s.summary(), Severity: s.severity()})
+	ui.SetTray(popup.Tray{Tooltip: trayTooltip(c, s), Severity: s.severity()})
 	ui.Show(orphanSpec(c, s.Orphans, nop))
 	ui.Show(statusSpec(c, s, nop))
 }
 
 // --- tray ---
+
+// trayTooltip is shown when hovering over the tray icon, e.g.
+// "Contoso - OneDrive Helper v0.7.1" / "Everything looks good".
+// (Windows shows at most 127 characters; the summary is last so the name and
+// version are never cut off.)
+func trayTooltip(c config.Config, s Status) string {
+	return c.Title() + " v" + version.Version + "\n" + s.summary()
+}
 
 func (a *Agent) updateTray(cfg config.Config, s Status) {
 	if !cfg.TrayIconEnabled {
@@ -240,7 +290,7 @@ func (a *Agent) updateTray(cfg config.Config, s Status) {
 		return
 	}
 	a.ui.SetTray(popup.Tray{
-		Tooltip:  cfg.Title() + "\n" + s.summary(),
+		Tooltip:  trayTooltip(cfg, s),
 		Severity: s.severity(),
 		OnClick:  a.showStatus,
 		Menu:     a.trayMenu,

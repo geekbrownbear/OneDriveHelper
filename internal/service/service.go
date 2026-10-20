@@ -15,6 +15,7 @@ import (
 
 	"github.com/geekbrownbear/OneDriveHelper/internal/config"
 	"github.com/geekbrownbear/OneDriveHelper/internal/elog"
+	"github.com/geekbrownbear/OneDriveHelper/internal/ipc"
 	"github.com/geekbrownbear/OneDriveHelper/internal/logx"
 	"github.com/geekbrownbear/OneDriveHelper/internal/version"
 )
@@ -59,7 +60,7 @@ type handler struct {
 // createStopEvent creates a uniquely named event that agents (any
 // authenticated user) may wait on but not signal.
 func createStopEvent() (string, windows.Handle, error) {
-	name := fmt.Sprintf(`Global\OneDriveHelperStop-%d-%d`, os.Getpid(), time.Now().UnixNano())
+	name := ipc.StopEventName(os.Getpid(), time.Now().UnixNano())
 	sd, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00100000;;;AU)") // AU: SYNCHRONIZE only
 	if err != nil {
 		return "", 0, err

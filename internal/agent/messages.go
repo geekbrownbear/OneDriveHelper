@@ -119,9 +119,15 @@ func orphanItems(orphans []onedrive.Orphan, note func(onedrive.Orphan) string) (
 }
 
 func orphanSpec(c config.Config, orphans []onedrive.Orphan, a Actions) popup.Spec {
-	title := "A SharePoint library has stopped syncing"
+	one, many := "A SharePoint library has", "SharePoint libraries have"
+	for _, o := range orphans {
+		if o.EmptyOrg {
+			one, many = "A OneDrive folder has", "OneDrive folders have"
+		}
+	}
+	title := one + " stopped syncing"
 	if len(orphans) > 1 {
-		title = fmt.Sprintf("%d SharePoint libraries have stopped syncing", len(orphans))
+		title = fmt.Sprintf("%d %s stopped syncing", len(orphans), many)
 	}
 	items, more := orphanItems(orphans, nil)
 	footer := c.SupportContact()
@@ -147,7 +153,8 @@ func fixingSpec(c config.Config) popup.Spec {
 	return popup.Spec{
 		ID: idFixing, Severity: popup.Info, Brand: c.Title(), Accent: c.AccentColor,
 		Title: "Fixing your library folders…",
-		Body:  "Saving a copy of your files and cleaning up. Please don't open or save files in those folders until this finishes.",
+		Body: "The folders have been moved to a safe place while a copy of your files is saved. " +
+			"Please save new work somewhere else until this finishes.",
 	}
 }
 

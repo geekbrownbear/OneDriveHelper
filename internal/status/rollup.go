@@ -65,6 +65,9 @@ func UserHealth(u User, now time.Time, staleAfter time.Duration) (Health, string
 	if f := s.LastFix; f != nil && !f.OK && now.Sub(f.At) < FailedFixWindow {
 		bump(Critical, "last fix failed "+f.At.Format("2006-01-02 15:04"))
 	}
+	if n := s.InterruptedFixes; n > 0 {
+		bump(Critical, plural(n, "earlier fix")+" did not finish")
+	}
 	if s.OneDrive.Configured && !s.OneDrive.Running && !s.OneDrive.Updating {
 		switch {
 		case s.AutoRestart.GaveUp:
@@ -143,7 +146,7 @@ func Fingerprint(r Report) string {
 	for _, u := range r.Users {
 		fmt.Fprintf(&b, "%s|%s|%s|%s|", u.Name, u.SID, u.Agent, u.Health)
 		if s := u.Snapshot; s != nil && u.Agent == AgentOK {
-			fmt.Fprintf(&b, "%v|%v|%v|%v|%s|%v|%v|", s.OneDrive.Configured, s.OneDrive.Running, s.OneDrive.Updating, s.OneDrive.Alerting, s.OneDrive.Version, s.AutoRestart.GaveUp, s.AutoRestart.Attempts)
+			fmt.Fprintf(&b, "%v|%v|%v|%v|%v|%s|%v|%v|%d|", s.OneDrive.Configured, s.OneDrive.Running, s.OneDrive.Unknown, s.OneDrive.Updating, s.OneDrive.Alerting, s.OneDrive.Version, s.AutoRestart.GaveUp, s.AutoRestart.Attempts, s.InterruptedFixes)
 			for _, a := range s.Accounts {
 				fmt.Fprintf(&b, "%s=%s/%d,", a.Key, a.Email, len(a.Libraries))
 			}

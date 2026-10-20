@@ -154,6 +154,8 @@ func renderRow(u User, loc *time.Location, td string, e func(string) string, tsp
 	switch {
 	case !od.Configured:
 		odText = "Not set up"
+	case od.Unknown:
+		odText = "Can't tell (process list unreadable)"
 	case od.Running:
 		odText = `<span style="color:#2e7d32">Running</span>`
 	case od.Updating:
@@ -234,6 +236,14 @@ func renderRow(u User, loc *time.Location, td string, e func(string) string, tsp
 			fix += fmt.Sprintf(", %d errors", f.Errors)
 		}
 	}
+	if s.InterruptedFixes > 0 {
+		if fix == dash {
+			fix = ""
+		} else {
+			fix += "<br>"
+		}
+		fix += fmt.Sprintf(`<span style="color:#c62828;font-weight:600">%s did not finish</span>`, plural(s.InterruptedFixes, "earlier fix"))
+	}
 	cell(fix)
 
 	cell(tsp(u.UpdatedAt))
@@ -267,6 +277,8 @@ func WriteTable(w io.Writer, r Report) error {
 			switch {
 			case !s.OneDrive.Configured:
 				od = "not set up"
+			case s.OneDrive.Unknown:
+				od = "unknown"
 			case s.OneDrive.Running:
 				od = "running"
 			case s.OneDrive.Updating:

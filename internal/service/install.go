@@ -3,13 +3,11 @@ package service
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -17,7 +15,6 @@ import (
 	"github.com/geekbrownbear/OneDriveHelper/internal/config"
 	"github.com/geekbrownbear/OneDriveHelper/internal/elog"
 	"github.com/geekbrownbear/OneDriveHelper/internal/logx"
-	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
 	"github.com/geekbrownbear/OneDriveHelper/internal/version"
 )
 
@@ -39,13 +36,8 @@ func Install(configFile string, logf func(string, ...any)) error {
 		return err
 	}
 	srcDir, dir := filepath.Dir(self), InstallDir()
-	if _, err := os.Stat(filepath.Join(srcDir, version.AgentExe)); err != nil {
-		return fmt.Errorf("%s must be next to %s", version.AgentExe, filepath.Base(self))
-	}
-	if configFile != "" { // validate before changing anything
-		if _, _, err := config.ReadFile(configFile); err != nil {
-			return fmt.Errorf("settings file %s: %w", configFile, err)
-		}
+	if err := preflight(srcDir, filepath.Base(self), configFile); err != nil {
+		return err
 	}
 
 	m, err := mgr.Connect()
@@ -53,28 +45,44 @@ func Install(configFile string, logf func(string, ...any)) error {
 		return err
 	}
 	defer m.Disconnect()
+	// Never interrupt a fix that is moving or deleting a user's files: wait
+	// for it first (up to fixWaitCap), before stopping anything.
+	w := realWaitEnv(logf)
+	deadline := w.now().Add(fixWaitCap)
+	legacy := installedPredatesFixLock()
+	w.waitForFix(deadline)
 	existing, err := m.OpenService(version.ServiceName)
 	if err == nil {
 		logf("Stopping existing service for upgrade...")
 		_ = stopAndWait(existing)
 		existing.Close()
 	}
-	stopAgents(logf)
+	w.stopAgents(deadline, legacy)
 
+	// From here on, a failure puts the previous programs back and restarts the
+	// service, so an upgrade never leaves a PC without a working version.
+	// (Settings are validated above but not rolled back.)
+	rollback := func() error { return nil }
 	if !strings.EqualFold(filepath.Clean(srcDir), filepath.Clean(dir)) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
-		for _, f := range []string{version.ServiceExe, version.AgentExe, version.ConfigExe} {
-			if _, err := os.Stat(filepath.Join(srcDir, f)); err != nil && f == version.ConfigExe {
-				continue // the config tool is optional
-			}
-			if err := copyWithRetry(filepath.Join(srcDir, f), filepath.Join(dir, f)); err != nil {
-				return fmt.Errorf("copy %s: %w", f, err)
-			}
-			_ = os.Remove(filepath.Join(dir, f+".old")) // left by an earlier upgrade
+		rb, err := upgrade(srcDir, dir, []string{version.ServiceExe, version.AgentExe, version.ConfigExe}, realFileOps())
+		if err != nil {
+			restartOld(m, logf)
+			return fmt.Errorf("upgrade failed, previous version kept: %w", err)
 		}
+		rollback = rb
 		logf("Copied binaries to %s", dir)
+	}
+	fail := func(err error) error {
+		if rbErr := rollback(); rbErr != nil {
+			logf("Warning: rolling back the programs failed: %v", rbErr)
+		} else {
+			logf("Rolled back to the previous programs")
+		}
+		restartOld(m, logf)
+		return err
 	}
 	svcExe := filepath.Join(dir, version.ServiceExe)
 	// Always quote the image path (mgr.CreateService only quotes paths that
@@ -85,14 +93,14 @@ func Install(configFile string, logf func(string, ...any)) error {
 	if err != nil {
 		s, err = m.CreateService(version.ServiceName, svcExe, mgr.Config{StartType: mgr.StartAutomatic})
 		if err != nil {
-			return fmt.Errorf("create service: %w", err)
+			return fail(fmt.Errorf("create service: %w", err))
 		}
 		logf("Created service %s", version.ServiceName)
 	}
 	defer s.Close()
 	cur, err := s.Config()
 	if err != nil {
-		return fmt.Errorf("read service config: %w", err)
+		return fail(fmt.Errorf("read service config: %w", err))
 	}
 	cur.BinaryPathName = binPath
 	cur.DisplayName = version.ProductName
@@ -100,10 +108,10 @@ func Install(configFile string, logf func(string, ...any)) error {
 	cur.StartType, cur.DelayedAutoStart = mgr.StartAutomatic, true
 	cur.ServiceStartName = "LocalSystem"
 	if err := s.UpdateConfig(cur); err != nil {
-		return fmt.Errorf("configure service: %w", err)
+		return fail(fmt.Errorf("configure service: %w", err))
 	}
 	if got, err := s.Config(); err != nil || got.BinaryPathName != binPath {
-		return fmt.Errorf("service image path is %q, expected %q", got.BinaryPathName, binPath)
+		return fail(fmt.Errorf("service image path is %q, expected %q", got.BinaryPathName, binPath))
 	}
 	logf("Service image path: %s", binPath)
 	_ = s.SetRecoveryActions([]mgr.RecoveryAction{
@@ -120,7 +128,7 @@ func Install(configFile string, logf func(string, ...any)) error {
 	}
 	if configFile != "" {
 		if err := config.Import(configFile); err != nil {
-			return fmt.Errorf("apply settings file: %w", err)
+			return fail(fmt.Errorf("apply settings file: %w", err))
 		}
 		logf("Applied settings from %s", configFile)
 	}
@@ -128,52 +136,61 @@ func Install(configFile string, logf func(string, ...any)) error {
 		logf("Removed obsolete settings: %s", strings.Join(old, ", "))
 	}
 	if err := config.WriteDefaults(); err != nil {
-		return fmt.Errorf("write default config: %w", err)
+		return fail(fmt.Errorf("write default config: %w", err))
 	}
 	logf("Configuration: HKLM\\%s", config.KeyPath)
-	if err := s.Start(); err != nil {
-		return fmt.Errorf("start service: %w", err)
+	if err := startAndWait(s); err != nil {
+		return fail(fmt.Errorf("start service: %w", err))
 	}
 	logf("Service started")
 	return nil
 }
 
-// stopAgents waits for user agents to exit after the service has stopped
-// (current agents exit as soon as the service signals them) and terminates
-// any that are still running after 20 seconds, e.g. agents from versions
-// that predate the stop signal. Without this an old agent keeps its session
-// "occupied" and the new version is never started there.
-func stopAgents(logf func(string, ...any)) {
-	agents := func() []uint32 {
-		procs, _ := onedrive.Processes()
-		var pids []uint32
-		for _, p := range procs {
-			if strings.EqualFold(p.Name, version.AgentExe) {
-				pids = append(pids, p.PID)
-			}
+// preflight checks everything that can be checked before anything is stopped.
+func preflight(srcDir, self, configFile string) error {
+	if _, err := os.Stat(filepath.Join(srcDir, version.AgentExe)); err != nil {
+		return fmt.Errorf("%s must be next to %s", version.AgentExe, self)
+	}
+	if configFile != "" { // validate before changing anything
+		if _, _, err := config.ReadFile(configFile); err != nil {
+			return fmt.Errorf("settings file %s: %w", configFile, err)
 		}
-		return pids
 	}
-	pids := agents()
-	if len(pids) == 0 {
-		return
+	return nil
+}
+
+// startAndWait starts the service and waits until it is running (an image
+// that crashes at start-up counts as a failure, so the upgrade rolls back).
+func startAndWait(s *mgr.Service) error {
+	if err := s.Start(); err != nil {
+		return err
 	}
-	logf("Waiting for %d user agent(s) to exit...", len(pids))
-	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline) && len(pids) > 0; pids = agents() {
-		time.Sleep(500 * time.Millisecond)
-	}
-	for _, pid := range pids {
-		h, err := windows.OpenProcess(windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, pid)
-		if err == nil {
-			err = windows.TerminateProcess(h, 1)
-			_, _ = windows.WaitForSingleObject(h, 5000)
-			windows.CloseHandle(h)
-		}
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		st, err := s.Query()
 		if err != nil {
-			logf("Warning: could not stop agent process %d: %v", pid, err)
-		} else {
-			logf("Stopped agent process %d (it did not exit by itself)", pid)
+			return err
 		}
+		switch st.State {
+		case svc.Running:
+			return nil
+		case svc.Stopped:
+			return errors.New("the service stopped right after starting")
+		}
+	}
+	return errors.New("timed out waiting for the service to start")
+}
+
+// restartOld starts the (previous) service again after a failed upgrade.
+func restartOld(m *mgr.Mgr, logf func(string, ...any)) {
+	s, err := m.OpenService(version.ServiceName)
+	if err != nil {
+		return // fresh install: nothing to restart
+	}
+	defer s.Close()
+	if err := s.Start(); err != nil {
+		logf("Warning: could not restart the previous service: %v", err)
+	} else {
+		logf("Previous service restarted")
 	}
 }
 
@@ -189,8 +206,12 @@ func Uninstall(purge bool, logf func(string, ...any)) error {
 	}
 	defer m.Disconnect()
 	if s, err := m.OpenService(version.ServiceName); err == nil {
+		w := realWaitEnv(logf)
+		deadline := w.now().Add(fixWaitCap)
+		legacy := installedPredatesFixLock()
+		w.waitForFix(deadline)
 		_ = stopAndWait(s)
-		stopAgents(logf)
+		w.stopAgents(deadline, legacy)
 		err = s.Delete()
 		s.Close()
 		if err != nil {
@@ -199,6 +220,15 @@ func Uninstall(purge bool, logf func(string, ...any)) error {
 		logf("Service removed")
 	} else {
 		logf("Service not installed")
+	}
+	// No agent is left to recover unfinished fixes after an uninstall: warn.
+	if left := unfinishedFixes(profileDirs()); len(left) > 0 {
+		msg := "These OneDrive Helper fixes did not finish. The folders are not where they were and must be restored by hand " +
+			"(each run folder holds the folder and a manifest.json; the backups are in the user's ODHelper\\Saved folder):\r\n" + strings.Join(left, "\r\n")
+		logf("WARNING: %s", strings.ReplaceAll(msg, "\r\n", "\n  "))
+		ev := elog.Open()
+		ev.Warning(elog.FixInterrupted, msg)
+		ev.Close()
 	}
 	_ = elog.Remove()
 	RemoveStatus() // so an RMM reads "not installed" rather than a frozen status
@@ -259,38 +289,4 @@ func deleteTree(root registry.Key, path string) error {
 		_ = deleteTree(root, path+`\`+s)
 	}
 	return registry.DeleteKey(root, path)
-}
-
-func copyWithRetry(src, dst string) error {
-	var err error
-	for i := 0; i < 20; i++ { // agents may hold the old exe open for a few seconds
-		if err = copyFile(src, dst); err == nil {
-			return nil
-		}
-		// A running image can be renamed even though it cannot be overwritten.
-		_ = os.Rename(dst, dst+".old")
-		time.Sleep(time.Second)
-	}
-	return err
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dst + ".new"
-	out, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, dst)
 }

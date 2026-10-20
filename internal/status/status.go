@@ -101,7 +101,10 @@ type Snapshot struct {
 	Orphans      []Orphan      `json:"orphans"`
 	Ignored      []Ignored     `json:"ignored,omitempty"`
 	LastFix      *LastFix      `json:"lastFix,omitempty"`
-	Truncated    bool          `json:"truncated,omitempty"` // lists were cut to the limits
+	// InterruptedFixes counts earlier fixes that did not finish and need
+	// attention (folders are not where they were).
+	InterruptedFixes int  `json:"interruptedFixes,omitempty"`
+	Truncated        bool `json:"truncated,omitempty"` // lists were cut to the limits
 }
 
 // OneDriveState is the OneDrive.exe state for the user.
@@ -112,8 +115,10 @@ type OneDriveState struct {
 	MissingSince *time.Time `json:"missingSince,omitempty"`
 	// Alerting: OneDrive has been missing past the grace period (event 3001
 	// written; automatic restarts or the alert are in progress).
-	Alerting bool   `json:"alerting"`
-	Version  string `json:"version,omitempty"`
+	Alerting bool `json:"alerting"`
+	// Unknown: the process list could not be read; Running is the last known state.
+	Unknown bool   `json:"unknown,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 // AutoRestart summarises automatic restarts in the last 30 minutes.

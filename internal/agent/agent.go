@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/geekbrownbear/OneDriveHelper/internal/config"
 	"github.com/geekbrownbear/OneDriveHelper/internal/elog"
+	"github.com/geekbrownbear/OneDriveHelper/internal/ipc"
 	"github.com/geekbrownbear/OneDriveHelper/internal/logx"
 	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
 	"github.com/geekbrownbear/OneDriveHelper/internal/popup"
@@ -26,18 +28,6 @@ import (
 	"github.com/geekbrownbear/OneDriveHelper/internal/version"
 	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
-
-// The running agent of a session holds a mutex in that session's own
-// namespace. Only processes in the session can create it there, so a user in
-// another session (e.g. on a shared Remote Desktop host) cannot squat the name
-// to stop this session's agent from starting.
-const agentMutex = `OneDriveHelperAgent`
-
-// MutexName is the name the service uses (from session 0) to look for the
-// agent mutex of a given session.
-func MutexName(session uint32) string {
-	return fmt.Sprintf(`Session\%d\%s`, session, agentMutex)
-}
 
 // LogPath returns the per-user agent log file.
 func LogPath() string {
@@ -62,15 +52,26 @@ type Agent struct {
 	lastFixCached    *status.LastFix
 	publishErrLogged bool
 
-	mu           sync.Mutex // guards the fields below (buttons run on other goroutines)
-	missingSince time.Time
-	outageLogged bool
-	restarts     []time.Time // automatic restart attempts (kept for autoRestartWindow)
-	autoGaveUp   bool        // automatic restarts exhausted for the current outage
-	orphanKey    string
-	fixing       bool
-	last         Status // latest check, for the tray menu and explanations
-	staleSince   map[string]time.Time
+	// stopping reports that the service has asked agents to exit (or is down):
+	// no fix may start, and a running fix moves no further folders.
+	stopping func() bool
+	// procState, onEvent, userFlow and afterPanic are replaced in tests.
+	procState  func() onedrive.ProcState
+	onEvent    func(id uint32)
+	userFlow   func(exe string, lg *log.Logger, busy func(bool), stop func() bool)
+	afterPanic func()
+
+	mu            sync.Mutex // guards the fields below (buttons run on other goroutines)
+	missingSince  time.Time
+	outageLogged  bool
+	restarts      []time.Time // automatic restart attempts (kept for autoRestartWindow)
+	autoGaveUp    bool        // automatic restarts exhausted for the current outage
+	lastRunning   time.Time   // last time OneDrive was seen running
+	unknownStreak int         // failed process listings in a row
+	orphanKey     string
+	fixing        bool
+	last          Status // latest check, for the tray menu and explanations
+	staleSince    map[string]time.Time
 }
 
 // staleNavGrace is how long an Explorer entry must point at a missing folder
@@ -125,7 +126,9 @@ func Run(ctx context.Context, standalone bool, stopEvent string) error {
 		}
 	}
 	session := winapi.CurrentSessionID()
-	name, _ := windows.UTF16PtrFromString(`Local\` + agentMutex)
+	// The session's agent mutex lives in the session's own namespace, so a
+	// user in another session cannot squat it (see internal/ipc).
+	name, _ := windows.UTF16PtrFromString(ipc.AgentMutexLocal())
 	mu, err := windows.CreateMutex(nil, false, name)
 	if err != nil { // includes ERROR_ALREADY_EXISTS
 		if mu != 0 {
@@ -148,7 +151,9 @@ func Run(ctx context.Context, standalone bool, stopEvent string) error {
 		sid:      sid,
 		fullName: winapi.CurrentUserName(),
 	}
+	a.stopping = func() bool { return ctx.Err() != nil || (!standalone && !serviceRunning()) }
 	defer a.ev.Close()
+	popup.SetPanicHandler(func(r any, stack []byte) { a.logPanic("popup action", r, stack) })
 	if a.ui, err = popup.Start(); err != nil {
 		a.log.Printf("popup UI unavailable: %v", err)
 	}
@@ -156,6 +161,7 @@ func Run(ctx context.Context, standalone bool, stopEvent string) error {
 
 	a.log.Printf("agent %s started in session %d (standalone=%v)", version.Version, session, standalone)
 	a.ev.Info(elog.AgentStarted, fmt.Sprintf("OneDrive Helper agent started for %s in session %d.", a.user, session))
+	a.recoverFixes()
 
 	serviceDown := 0
 	timer := time.NewTimer(5 * time.Second)
@@ -248,6 +254,26 @@ func (a *Agent) tryAutoRestart(cfg config.Config, now time.Time) bool {
 	return true
 }
 
+func (a *Agent) warnEvent(id uint32, msg string) {
+	a.ev.Warning(id, msg)
+	if a.onEvent != nil {
+		a.onEvent(id)
+	}
+}
+
+// recoverFixes finishes or reports fixes interrupted by a crash, kill, power
+// loss or logoff. It runs as the user only (never elevated).
+func (a *Agent) recoverFixes() {
+	t, err := remediate.CurrentUserTarget()
+	if err != nil {
+		a.log.Printf("recovery: %v", err)
+		return
+	}
+	for _, i := range remediate.Recover(t, a.log, a.ev) {
+		a.log.Printf("recovery: needs attention:\n%s", i.Text())
+	}
+}
+
 // waitForFix blocks while a fix is running so files are never left half-moved.
 func (a *Agent) waitForFix() {
 	for {
@@ -282,8 +308,35 @@ func serviceRunning() bool {
 }
 
 func (a *Agent) actions() Actions {
-	return Actions{Relaunch: a.relaunch, Snooze: a.snooze, Support: a.support, Email: a.email, Website: a.website,
-		Fix: a.fix, Explain: a.explain, CopyDetails: a.copyDetails}
+	return Actions{
+		Relaunch:    a.safe("restart OneDrive", a.relaunch),
+		Snooze:      func(alert, d string) { a.safe("ignore", func() { a.snooze(alert, d) })() },
+		Support:     a.safe("contact support", a.support),
+		Email:       a.safe("e-mail support", a.email),
+		Website:     a.safe("support website", a.website),
+		Fix:         a.safe("fix", a.fix),
+		Explain:     func(topic string) { a.safe("explain", func() { a.explain(topic) })() },
+		CopyDetails: a.safe("copy details", a.copyDetails),
+	}
+}
+
+// safe wraps an action so a panic in it is logged with its stack trace and
+// never stops the agent.
+func (a *Agent) safe(name string, f func()) func() {
+	return func() {
+		defer func() {
+			if r := recover(); r != nil {
+				a.logPanic(name, r, debug.Stack())
+			}
+		}()
+		f()
+	}
+}
+
+func (a *Agent) logPanic(name string, r any, stack []byte) {
+	if a.log != nil {
+		a.log.Printf("panic in %s: %v\n%s", name, r, stack)
+	}
 }
 
 func (a *Agent) tick(cfg config.Config, now time.Time) {
@@ -319,10 +372,33 @@ func (a *Agent) tick(cfg config.Config, now time.Time) {
 	a.updateTray(cfg, s)
 }
 
+// unknownLimit failed process listings in a row are logged once (3007).
+const unknownLimit = 5
+
+// oneDriveState reads OneDrive's process state (replaceable in tests).
+func (a *Agent) oneDriveState() onedrive.ProcState {
+	if a.procState != nil {
+		return a.procState()
+	}
+	return onedrive.OneDriveState(a.session)
+}
+
 func (a *Agent) checkOneDrive(cfg config.Config, now time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if onedrive.OneDriveRunning(a.session) {
+	state := a.oneDriveState()
+	if state == onedrive.StateUnknown {
+		// Can't tell: change nothing (no restart, no alert, no clock change).
+		if a.unknownStreak++; a.unknownStreak == unknownLimit {
+			a.log.Printf("the process list could not be read %d times in a row", unknownLimit)
+			a.warnEvent(elog.OneDriveStateUnknown, fmt.Sprintf("OneDrive Helper could not read the process list for %s %d checks in a row, so it cannot tell whether OneDrive is running.", a.user, unknownLimit))
+		}
+		return
+	}
+	afterUnknown := a.unknownStreak > 0
+	a.unknownStreak = 0
+	if state == onedrive.StateRunning {
+		a.lastRunning = now
 		if a.outageLogged {
 			if n := len(recentRestarts(a.restarts, now)); n > 0 && !a.autoGaveUp {
 				a.ev.Info(elog.OneDriveAutoRestarted, fmt.Sprintf("OneDrive had stopped for %s and was restarted automatically (attempt %d).", a.user, n))
@@ -341,8 +417,14 @@ func (a *Agent) checkOneDrive(cfg config.Config, now time.Time) {
 		return
 	}
 	if a.missingSince.IsZero() {
-		a.missingSince = now
-		return
+		if afterUnknown && !a.lastRunning.IsZero() {
+			// It stopped at some point while we couldn't look: count from the
+			// last time it was seen running, as the normal timeline would.
+			a.missingSince = a.lastRunning
+		} else {
+			a.missingSince = now
+			return
+		}
 	}
 	if now.Sub(a.missingSince) < cfg.OneDriveGrace() {
 		return
@@ -409,8 +491,8 @@ func (a *Agent) checkOrphans(cfg config.Config, now time.Time, orphans []onedriv
 // --- button actions (run on their own goroutines) ---
 
 func (a *Agent) relaunch() {
-	if onedrive.OneDriveRunning(a.session) {
-		return
+	if a.oneDriveState() != onedrive.StateNotRunning {
+		return // running, or we can't tell: never start a second copy
 	}
 	if err := onedrive.LaunchOneDrive(a.hive); err != nil {
 		a.log.Printf("relaunch: %v", err)
@@ -503,19 +585,41 @@ func (a *Agent) fix() {
 		a.fixing, a.orphanKey = false, "" // re-evaluate (and re-alert if needed) on the next check
 		a.mu.Unlock()
 	}()
+	// A panic inside the fix has already unwound through Execute (releasing
+	// its locks, deleting nothing more): put back or report what it left at
+	// once, without waiting for the agent to restart.
+	defer func() {
+		if r := recover(); r != nil {
+			a.logPanic("fix", r, debug.Stack())
+			a.ui.Hide(idFixing)
+			if a.afterPanic != nil {
+				a.afterPanic()
+			} else {
+				a.recoverFixes()
+			}
+		}
+	}()
 	exe, err := os.Executable()
 	if err != nil {
 		a.log.Printf("fix: %v", err)
 		return
 	}
 	cfg := config.Load()
-	remediate.UserFlow(exe, a.log, func(busy bool) {
+	stopping := a.stopping
+	if stopping == nil {
+		stopping = func() bool { return false }
+	}
+	userFlow := a.userFlow
+	if userFlow == nil {
+		userFlow = remediate.UserFlow
+	}
+	userFlow(exe, a.log, func(busy bool) {
 		if busy {
 			a.ui.Show(fixingSpec(cfg))
 		} else {
 			a.ui.Hide(idFixing)
 		}
-	})
+	}, stopping)
 }
 
 // RunSample shows both alerts with logging-only actions until both are closed

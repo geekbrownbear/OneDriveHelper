@@ -79,6 +79,27 @@ func TestRollUpFailedFixWindow(t *testing.T) {
 	}
 }
 
+func TestRollUpInterruptedFixAndUnknown(t *testing.T) {
+	s := okSnapshot("a")
+	s.InterruptedFixes = 1
+	r := eval(user("a", s))
+	if r.Health != Critical || !strings.Contains(r.Users[0].Problem, "1 earlier fix did not finish") {
+		t.Errorf("interrupted: %s %q", r.Health, r.Users[0].Problem)
+	}
+	h := RenderHTML(r, time.UTC)
+	if !strings.Contains(h, "1 earlier fix did not finish") {
+		t.Error("HTML lacks the interrupted fix")
+	}
+	u := okSnapshot("b")
+	u.OneDrive.Running, u.OneDrive.Unknown, u.OneDrive.Alerting = false, true, false
+	if r := eval(user("b", u)); r.Health != Healthy {
+		t.Errorf("unknown state is not an outage: %s", r.Health)
+	}
+	if h := RenderHTML(eval(user("b", u)), time.UTC); !strings.Contains(h, "Can&#39;t tell") && !strings.Contains(h, "Can't tell") {
+		t.Error("HTML lacks the unknown state")
+	}
+}
+
 func TestRollUpNotRunning(t *testing.T) {
 	s := okSnapshot("a")
 	s.OneDrive.Running = false
