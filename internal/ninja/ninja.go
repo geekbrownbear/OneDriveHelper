@@ -96,11 +96,26 @@ func (c *CLI) Options(ctx context.Context, field string) (map[string]string, err
 	if err := checkField(field); err != nil {
 		return nil, err
 	}
-	out, err := c.run(ctx, nil, "options", field)
+	out, err := c.read(ctx, "options", field)
 	if err != nil {
 		return nil, err
 	}
 	return ParseOptions(out), nil
+}
+
+// read runs a command that prints a value. On Windows the CLI writes to the
+// console unless told --direct-out, which a service capturing stdout never
+// sees; so that flag is passed first, and dropped only if the CLI rejects it.
+func (c *CLI) read(ctx context.Context, cmd, field string) (string, error) {
+	out, err := c.run(ctx, nil, cmd, field, "--direct-out")
+	if err == nil {
+		return out, nil
+	}
+	fallback, ferr := c.run(ctx, nil, cmd, field)
+	if ferr != nil {
+		return "", err // report the first attempt's error
+	}
+	return fallback, nil
 }
 
 // ParseOptions parses "GUID=Name" lines.
@@ -133,6 +148,9 @@ func (c *CLI) SetDropdown(ctx context.Context, field, option string) error {
 			return c.Set(ctx, field, guid)
 		}
 	}
+	if len(opts) == 0 {
+		return fmt.Errorf("dropdown %s: the NinjaOne CLI returned no options; check the field exists, is a dropdown with the options Healthy, Warning, Critical, Stale, NoUser, NotInstalled, and allows Scripts: Read/Write", field)
+	}
 	names := make([]string, 0, len(opts))
 	for name := range opts {
 		names = append(names, name)
@@ -146,7 +164,7 @@ func (c *CLI) Get(ctx context.Context, field string) (string, error) {
 	if err := checkField(field); err != nil {
 		return "", err
 	}
-	out, err := c.run(ctx, nil, "get", field)
+	out, err := c.read(ctx, "get", field)
 	if err != nil {
 		return "", err
 	}

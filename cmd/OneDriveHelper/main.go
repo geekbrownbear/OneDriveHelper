@@ -213,19 +213,34 @@ func ignoreCmd(args []string) error {
 		}
 		return w.Flush()
 	case "add":
-		fs := flag.NewFlagSet("ignore add", flag.ExitOnError)
-		note := fs.String("note", "", "why the folder is kept (who decided, ticket number)")
-		_ = fs.Parse(args[1:])
-		if fs.NArg() != 1 {
+		// Accept "--note" before or after the folder (scripts put the folder first).
+		var folder, note string
+		rest := args[1:]
+		for i := 0; i < len(rest); i++ {
+			a := rest[i]
+			switch {
+			case strings.HasPrefix(a, "--note=") || strings.HasPrefix(a, "-note="):
+				note = a[strings.Index(a, "=")+1:]
+			case a == "--note" || a == "-note":
+				if i+1 < len(rest) {
+					note, i = rest[i+1], i+1
+				}
+			case folder == "":
+				folder = a
+			default:
+				return fmt.Errorf("usage: ignore add <folder> [--note \"<why>\"] (got extra argument %q)", a)
+			}
+		}
+		if folder == "" {
 			return fmt.Errorf("usage: ignore add <folder> [--note \"<why>\"]")
 		}
 		if err := needAdmin(); err != nil {
 			return err
 		}
-		if err := onedrive.AddIgnoredFolder(fs.Arg(0), *note); err != nil {
+		if err := onedrive.AddIgnoredFolder(folder, note); err != nil {
 			return err
 		}
-		fmt.Printf("Ignoring %s. It will disappear from alerts and the status within a minute.\n", fs.Arg(0))
+		fmt.Printf("Ignoring %s. It will disappear from alerts and the status within a minute.\n", folder)
 		return nil
 	case "remove":
 		if len(args) != 2 {

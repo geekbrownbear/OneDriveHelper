@@ -20,7 +20,7 @@ func fakeCLI(t *testing.T) (*CLI, string) {
 	script := "#!/bin/sh\necho \"args: $*\" >> \"" + logFile + "\"\n" +
 		"if [ \"$2\" = \"--stdin\" ]; then echo \"stdin: $(cat)\" >> \"" + logFile + "\"; fi\n" +
 		"if [ \"$1\" = \"get\" ]; then printf 'value of %s\\r\\n' \"$2\"; fi\n" +
-		"if [ \"$1\" = \"options\" ]; then printf '11111111-aaaa-4bbb-8ccc-000000000001=Healthy\\r\\n22222222-aaaa-4bbb-8ccc-000000000002=Critical\\r\\n'; fi\n" +
+		"if [ \"$1\" = \"options\" ] && [ \"$2\" = \"ODHealth\" ]; then printf '11111111-aaaa-4bbb-8ccc-000000000001=Healthy\\r\\n22222222-aaaa-4bbb-8ccc-000000000002=Critical\\r\\n'; fi\n" +
 		"if [ \"$2\" = \"boom\" ]; then echo 'no such field' >&2; exit 3; fi\n"
 	path := filepath.Join(dir, "ninjarmm-cli")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -60,7 +60,7 @@ func TestSetGet(t *testing.T) {
 		t.Errorf("get: %q %v", v, err)
 	}
 	log, _ := os.ReadFile(logFile)
-	for _, want := range []string{"args: set ODHealth Healthy", "args: set --stdin ODErrors", "stdin: <table>", "args: set --stdin ODBig", "args: get ODHelperConfig"} {
+	for _, want := range []string{"args: set ODHealth Healthy", "args: set --stdin ODErrors", "stdin: <table>", "args: set --stdin ODBig", "args: get ODHelperConfig --direct-out"} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("log lacks %q:\n%s", want, log)
 		}
@@ -80,6 +80,10 @@ func TestSetDropdown(t *testing.T) {
 	err := c.SetDropdown(ctx, "ODHealth", "Stale")
 	if err == nil || !strings.Contains(err.Error(), "options: Critical, Healthy") {
 		t.Errorf("missing option: %v", err)
+	}
+	err = c.SetDropdown(ctx, "ODEmpty", "Stale") // the fake prints options only for ODHealth
+	if err == nil || !strings.Contains(err.Error(), "returned no options") {
+		t.Errorf("empty option list: %v", err)
 	}
 	if got := ParseOptions("  \r\nbad line\r\n=x\r\n"); len(got) != 0 {
 		t.Errorf("junk parsed: %v", got)
