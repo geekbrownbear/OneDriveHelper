@@ -41,6 +41,21 @@ type Actions struct {
 
 const ignoreLinkLabel = "I want to keep this folder - ask support to stop reporting it"
 
+// addIgnoreLinks puts the "keep this folder" link under every listed folder
+// (items[i] describes orphans[i]) when the action is available.
+func addIgnoreLinks(items []popup.Item, orphans []onedrive.Orphan, a Actions) {
+	if a.RequestIgnore == nil {
+		return
+	}
+	for i := range items {
+		if i >= len(orphans) {
+			return
+		}
+		o := orphans[i]
+		items[i].Link, items[i].OnLink = ignoreLinkLabel, func() { a.RequestIgnore(o) }
+	}
+}
+
 func or(s, def string) string {
 	if strings.TrimSpace(s) == "" {
 		return def
@@ -135,12 +150,7 @@ func orphanSpec(c config.Config, orphans []onedrive.Orphan, a Actions) popup.Spe
 		title = fmt.Sprintf("%d %s stopped syncing", len(orphans), many)
 	}
 	items, more := orphanItems(orphans, nil)
-	if a.RequestIgnore != nil {
-		for i := range items {
-			o := orphans[i]
-			items[i].Link, items[i].OnLink = ignoreLinkLabel, func() { a.RequestIgnore(o) }
-		}
-	}
+	addIgnoreLinks(items, orphans, a)
 	footer := c.SupportContact()
 	if more != "" {
 		footer = more + "\n\n" + footer

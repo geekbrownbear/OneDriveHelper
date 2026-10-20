@@ -160,6 +160,7 @@ func statusSpec(c config.Config, s Status, a Actions) popup.Spec {
 	} else {
 		fmt.Fprintf(&b, "\n\nFolders that have stopped syncing (%d):", len(s.Orphans))
 		items, footer = orphanItems(s.Orphans, remediate.ResyncNote)
+		addIgnoreLinks(items, s.Orphans, a)
 		if s.OrphanSnooze.Active {
 			footer = strings.TrimSpace(footer + "\n\nThe alert for these folders is ignored " + s.OrphanSnooze.Describe() + ".")
 		}
