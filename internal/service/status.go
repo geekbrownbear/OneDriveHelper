@@ -85,6 +85,9 @@ func (h *handler) buildReport(cfg config.Config, now time.Time) status.Report {
 		Schema: status.Schema, GeneratedAt: now, Hostname: host, HelperVersion: version.Version,
 		ServiceStarted: h.started, CheckIntervalSeconds: cfg.CheckIntervalSeconds, Notes: append([]string(nil), h.notes...),
 	}
+	for _, ig := range onedrive.IgnoredFolders() {
+		r.IgnoredFolders = append(r.IgnoredFolders, status.IgnoredFolder{Path: ig.Path, Note: ig.Note})
+	}
 	if v, perMachine := onedrive.MachineClientVersion(); v != "" {
 		r.OneDriveInstall = status.Install{Version: v, Type: "per-user"}
 		if perMachine {

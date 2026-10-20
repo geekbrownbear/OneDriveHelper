@@ -240,7 +240,7 @@ func UserFlow(agentExe string, lg *log.Logger, busy func(bool), stop func() bool
 	manual := false
 	for _, it := range plan.Items {
 		list.WriteString("• " + it.Orphan.DisplayName() + "\n    " + ResyncNote(it.Orphan) + "\n")
-		manual = manual || (!it.Orphan.CanResync() && !it.Orphan.EmptyOrg)
+		manual = manual || (!it.Orphan.CanResync() && !it.Orphan.EmptyOrg && !it.Orphan.OldOneDrive)
 	}
 	step3 := "  3. Ask OneDrive to sync the libraries again\n"
 	if manual {
@@ -345,6 +345,8 @@ func ResyncNote(o onedrive.Orphan) string {
 		return "Contains your " + strings.Join(o.KnownFolders, "/") + " folder, so it can only be fixed by your support team."
 	case o.EmptyOrg:
 		return "Empty leftover folder - it will simply be removed."
+	case o.OldOneDrive:
+		return "Old work OneDrive that is no longer signed in (for example after leaving an organisation, or a rename). Anything saved here is not backed up; the files will be saved and the folder removed."
 	case o.CanResync():
 		return "Will be synced again automatically."
 	case o.WebURL != "":
@@ -361,8 +363,8 @@ func Resync(orphans []onedrive.Orphan, lg *log.Logger) {
 	defer ev.Close()
 	var auto, manual, none []string
 	for _, o := range orphans {
-		if o.EmptyOrg || exists(o.Path) {
-			continue
+		if o.EmptyOrg || o.OldOneDrive || exists(o.Path) {
+			continue // nothing to re-sync
 		}
 		switch {
 		case o.CanResync():

@@ -316,11 +316,18 @@ func TestWriteTableAndStaleText(t *testing.T) {
 	s := okSnapshot("a")
 	s.Orphans = []Orphan{{Path: `C:\p`, Name: "p", Kind: "library"}}
 	r := eval(user("a", s))
+	r.IgnoredFolders = []IgnoredFolder{{Path: `C:\Users\a\Corp\Archive - Documents`, Note: "T12345: kept for reference"}}
+	if h := RenderHTML(r, time.UTC); !strings.Contains(h, "Kept on purpose") || !strings.Contains(h, "T12345") {
+		t.Error("HTML lacks the ignore list")
+	}
+	if Fingerprint(r) == Fingerprint(eval(user("a", s))) {
+		t.Error("the ignore list must change the fingerprint")
+	}
 	var buf bytes.Buffer
 	if err := WriteTable(&buf, r); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"PC01", "Health: Critical", `CORP\a`, "running", `C:\p`} {
+	for _, want := range []string{"PC01", "Health: Critical", `CORP\a`, "running", `C:\p`, "Kept on purpose", "Archive - Documents"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("table lacks %q:\n%s", want, buf.String())
 		}

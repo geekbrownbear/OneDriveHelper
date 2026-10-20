@@ -57,8 +57,11 @@ func buildSnapshot(user, sid string, s Status, st agentState, fix *status.LastFi
 	}
 	for _, o := range s.Orphans {
 		kind := "library"
-		if o.EmptyOrg {
+		switch {
+		case o.EmptyOrg:
 			kind = "emptyOrg"
+		case o.OldOneDrive:
+			kind = "oldOneDrive"
 		}
 		snap.Orphans = append(snap.Orphans, status.Orphan{Path: o.Path, Name: o.DisplayName(), Kind: kind,
 			CanResync: o.CanResync(), SiteURL: o.WebURL, Protected: len(o.KnownFolders) > 0})

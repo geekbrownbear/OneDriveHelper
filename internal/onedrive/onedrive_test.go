@@ -204,9 +204,10 @@ func TestFindOrphansEmptyAndPlainOrgFolders(t *testing.T) {
 	}
 }
 
-// Personal OneDrive folders are never reported, nor scanned as organisation
-// folders: a fresh PC signed in to a work account always has an unused,
-// empty "OneDrive" placeholder next to "OneDrive - <Org>".
+// The consumer "OneDrive" placeholder is never reported (a fresh PC signed in
+// to a work account always has an unused, empty one) and no "OneDrive..."
+// folder is scanned as an organisation folder. An old work OneDrive
+// ("OneDrive - <Org>") that no signed-in account uses is reported.
 func TestFindOrphansIgnoresPersonalFolders(t *testing.T) {
 	profile := `C:\Users\jsmith`
 	live, plain, old := filepath.Join(profile, "OneDrive - Contoso"), filepath.Join(profile, "OneDrive"), filepath.Join(profile, "OneDrive - OLD COMPANY")
@@ -227,8 +228,62 @@ func TestFindOrphansIgnoresPersonalFolders(t *testing.T) {
 		Accounts:   []Account{{Key: "Business1", UserFolder: live, SyncedFolders: []string{live}}},
 		Providers:  []Provider{{MountPoint: old, LibraryType: "mysite"}, {MountPoint: plain, LibraryType: "personal"}},
 	}
+	got := FindOrphans(in, fs)
+	if len(got) != 1 || got[0].Path != old || !got[0].OldOneDrive || got[0].DisplayName() != "OneDrive - OLD COMPANY (old work OneDrive folder)" {
+		t.Fatalf("the old work OneDrive must be flagged, the consumer placeholder and the live folder must not: %+v", got)
+	}
+	in.Providers = nil
+	if got := FindOrphans(in, fs); len(got) != 1 || got[0].Path != old {
+		t.Fatalf("found from the profile scan alone: %+v", got)
+	}
+	// "OneDrive - Personal" is the consumer account: never flagged.
+	personal := filepath.Join(profile, "OneDrive - Personal")
+	fs.dirs[Clean(profile)] = []fsutil.Entry{cloud("OneDrive - Contoso"), cloud("OneDrive - Personal")}
+	fs.dirs[Clean(personal)] = []fsutil.Entry{dir("Pictures")}
 	if got := FindOrphans(in, fs); len(got) != 0 {
-		t.Fatalf("personal OneDrive folders must not be flagged: %+v", got)
+		t.Fatalf("consumer folders must not be flagged: %+v", got)
+	}
+}
+
+func TestFindOrphansHonoursIgnoreList(t *testing.T) {
+	profile := `C:\Users\jsmith`
+	org := filepath.Join(profile, "Fabrikam")
+	keep, gone := filepath.Join(org, "Archive - Documents"), filepath.Join(org, "Bids - Documents")
+	fs := fakeFS{dirs: map[string][]fsutil.Entry{
+		Clean(profile): {dir("Fabrikam")},
+		Clean(org):     {cloud("Archive - Documents"), cloud("Bids - Documents")},
+	}}
+	in := Inputs{ProfileDir: profile, Providers: []Provider{{MountPoint: keep, LibraryType: "teamsite"}, {MountPoint: gone, LibraryType: "teamsite"}}}
+	if got := FindOrphans(in, fs); len(got) != 2 {
+		t.Fatalf("both should be reported before ignoring: %+v", got)
+	}
+	in.Ignored = []string{Clean(keep)}
+	got := FindOrphans(in, fs)
+	if len(got) != 1 || got[0].Path != gone {
+		t.Fatalf("the ignored folder must be dropped: %+v", got)
+	}
+	in.Ignored = []string{Clean(org)} // ignoring a parent covers everything inside it
+	if got := FindOrphans(in, fs); len(got) != 0 {
+		t.Fatalf("ignoring the organisation folder must drop its libraries: %+v", got)
+	}
+}
+
+func TestIsWorkOneDriveName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"OneDrive - Contoso":    true,
+		"onedrive - OLD LTD":    true,
+		"OneDrive":              false,
+		"OneDrive - Personal":   false,
+		"OneDrive - personal":   false,
+		"OneDrive - ":           false,
+		"OneDrive notes":        false,
+		"OneDriveTemp":          false,
+		"Contoso":               false,
+		"OneDrive -  Contoso  ": true,
+	} {
+		if got := IsWorkOneDriveName(name); got != want {
+			t.Errorf("%q: got %v, want %v", name, got, want)
+		}
 	}
 }
 

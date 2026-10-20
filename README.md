@@ -4,7 +4,7 @@ A small Windows tool that keeps an eye on OneDrive for your users, tells them wh
 
 **Current version: 0.8.1** ([release notes and downloads](https://github.com/denismcapple/OneDriveHelper/releases/latest)). To see which version a PC is running, hover over the OneDrive Helper icon next to the clock, or run `"C:\Program Files\OneDriveHelper\OneDriveHelper.exe" version`.
 
-> **New in 0.8.1: no more false alarms on new PCs.** Personal OneDrive folders (`OneDrive`, `OneDrive - Something`) are no longer reported. A freshly set-up PC signed in to a work account always has an empty, unused `OneDrive` folder, which 0.7.0 and 0.8.0 wrongly flagged as "stopped syncing". The alert's heading now also says "OneDrive folder" rather than "SharePoint library" when the list includes a leftover organisation folder.
+> **Which OneDrive folders count.** The consumer OneDrive placeholder (`OneDrive`, `OneDrive - Personal`) is never reported: a freshly set-up PC signed in to a work account always has an empty, unused one. An old *work* OneDrive (`OneDrive - Old Company`) that no signed-in account uses any more **is** reported, because people keep saving into it after leaving an organisation or a rename, and nothing they save goes anywhere.
 >
 > **New in 0.8.0: a much safer fix.** The folder fix is the only part of the tool that deletes anything, so it now moves each folder out of the way before saving it, deletes only files it has proven it saved, puts everything back if anything is in doubt, and recovers by itself if it's interrupted. Upgrades wait for a fix in progress, and roll back if they fail. The details are in [How the fix works](#how-the-fix-works).
 
@@ -33,7 +33,9 @@ We got tired of finding out about these the hard way, so we wrote something that
   * library folders OneDrive has dropped
   * leftover organisation folders
 
-  Personal OneDrive folders (`OneDrive`, `OneDrive - Something`) are never flagged.
+  * old work `OneDrive - Something` folders that no signed-in account uses any more
+
+  The consumer `OneDrive` placeholder is never flagged.
 * **Explains it in plain English.** Every alert has a **What does this mean?** link written for people who don't know or care how OneDrive works.
 * **Makes it easy to get help.** **Contact support** offers to e-mail your service desk with a full diagnostic report already in the message, or to open your support website.
 * **Fixes broken folders safely**, after an administrator approves. It moves the folder aside, saves a copy of every file stored on the PC, deletes only the files it has proven it saved, then asks OneDrive to sync the library again. If anything is in doubt, nothing is deleted and the folder goes back where it was.
@@ -292,6 +294,18 @@ The service refreshes the machine status every 30 seconds (`AgentWatchdogSeconds
 
 The roll-up rules: a user is **Critical** with any folder not syncing or a fix that failed in the last 7 days; **Warning** when OneDrive has been down past the grace period, automatic restarts failed, or they are ignoring an alert about a live problem; **Stale** when their agent hasn't reported for three check intervals; otherwise **Healthy**. The machine takes the worst user, or **NoUser** when nobody is signed in.
 
+### Keeping a folder on purpose
+
+If a user wants to keep a folder that OneDrive no longer syncs (a copy of an archived SharePoint site, an old library kept for reference), put it on the ignore list from an elevated prompt or a NinjaOne remote shell:
+
+```powershell
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ignore add "C:\Users\jsmith\Contoso\Archive - Documents" --note "T12345: kept for reference"
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ignore list
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ignore remove "C:\Users\jsmith\Contoso\Archive - Documents"
+```
+
+Ignored folders (and everything inside them) are never reported and never included in a fix. The list is machine-wide, under `HKLM\SOFTWARE\OneDriveHelper\IgnoredFolders`, so only administrators can change it, and it is shown at the bottom of the status table so it isn't forgotten. [`ninjaone/Ignore-OneDriveFolder.ps1`](ninjaone/Ignore-OneDriveFolder.ps1) wraps this for NinjaOne.
+
 ### Other RMM tools
 
 Everything above except the custom-field push works anywhere: the event log, `status.json` and the registry key are there whatever runs the scripts. This generic install script works in Datto RMM, N-able, ConnectWise Automate, Atera, Kaseya, Intune platform scripts and anything else that can run PowerShell as SYSTEM. Fill in the version and copy the two checksums from that release's `SHA256SUMS.txt`. Paste the customer's settings into the JSON block.
@@ -496,7 +510,7 @@ OneDrive's provider list is only used as history, because it keeps entries for l
 
 The organisation folders OneDrive creates in the profile (they carry a OneDrive `desktop.ini`) are then checked. Anything inside one that isn't being synced is reported. So is an organisation folder that's empty apart from `desktop.ini`.
 
-Personal OneDrive folders (`OneDrive`, `OneDrive - Something`) are never reported, even when no signed-in account uses them. Every PC signed in to a work account has an empty `OneDrive` placeholder, so flagging them would raise false alarms on almost every new machine.
+The consumer OneDrive placeholder (`OneDrive`, `OneDrive - Personal`) is never reported, even when no consumer account is signed in: every PC signed in to a work account has an empty one, so flagging it would raise false alarms on almost every new machine. A work OneDrive folder (`OneDrive - <Org>`) is reported when no signed-in account uses it. The fix saves its files and removes it; there is nothing to re-sync.
 
 To reconnect a library automatically we need its site, web and list IDs. Those are recorded while the library is healthy. They can also be recovered from the `ClientPolicy` files OneDrive leaves behind, which means even libraries that broke before this tool was installed can usually be reconnected.
 

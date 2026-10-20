@@ -143,6 +143,9 @@ func summary(r *Report) string {
 func Fingerprint(r Report) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s|%d|%s|%s|%s|%s\n", r.Health, r.StaleFolderCount, r.HelperVersion, r.OneDriveInstall.Type, r.OneDriveInstall.Version, strings.Join(r.Notes, ";"))
+	for _, ig := range r.IgnoredFolders {
+		fmt.Fprintf(&b, "ignore:%s=%s\n", ig.Path, ig.Note)
+	}
 	for _, u := range r.Users {
 		fmt.Fprintf(&b, "%s|%s|%s|%s|", u.Name, u.SID, u.Agent, u.Health)
 		if s := u.Snapshot; s != nil && u.Agent == AgentOK {

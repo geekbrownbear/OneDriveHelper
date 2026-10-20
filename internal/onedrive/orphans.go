@@ -22,6 +22,11 @@ type Orphan struct {
 	// EmptyOrg marks a leftover organisation folder that contains no
 	// libraries at all (Path == TenantRoot). There is nothing to re-sync.
 	EmptyOrg bool
+	// OldOneDrive marks a work OneDrive folder ("OneDrive - <Org>") whose
+	// account is no longer signed in on this PC (Path == TenantRoot), for
+	// example after the user left an organisation or it was renamed. The
+	// consumer "OneDrive" placeholder is never reported.
+	OldOneDrive bool
 	// KnownFolders lists Windows folders (Desktop, Documents, ...) that are
 	// redirected into this folder. Such folders are never removed automatically.
 	KnownFolders []string
@@ -30,10 +35,14 @@ type Orphan struct {
 // Org is the organisation folder name, e.g. "Contoso".
 func (o Orphan) Org() string { return filepath.Base(o.TenantRoot) }
 
-// DisplayName is "Library (Org)" or "Org (empty organisation folder)".
+// DisplayName is "Library (Org)", "Org (empty organisation folder)" or
+// "OneDrive - Org (old work OneDrive folder)".
 func (o Orphan) DisplayName() string {
-	if o.EmptyOrg {
+	switch {
+	case o.EmptyOrg:
 		return o.Name + " (empty organisation folder)"
+	case o.OldOneDrive:
+		return o.Name + " (old work OneDrive folder)"
 	}
 	if o.TenantRoot == "" {
 		return o.Name
@@ -58,6 +67,20 @@ type Inputs struct {
 	// not empty the data may be incomplete, so IsActive treats every path as
 	// active and nothing should be changed on the strength of it.
 	ReadErrors []string
+	// Ignored are folders (cleaned paths) a technician chose to keep; they
+	// are never reported or fixed. See IgnoredFolders.
+	Ignored []string
+}
+
+// IsIgnored reports whether p is on, or inside a folder on, the ignore list.
+func (in Inputs) IsIgnored(p string) bool {
+	c := Clean(p)
+	for _, ig := range in.Ignored {
+		if within(c, ig) {
+			return true
+		}
+	}
+	return false
 }
 
 const userShellFoldersPath = `Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders`
@@ -142,6 +165,7 @@ func Gather(h Hive, profileDir string) Inputs {
 		Providers:  providers(h, r),
 		SyncRoots:  registeredSyncRoots(r),
 		Known:      loadLibraries(h, r),
+		Ignored:    IgnoredPaths(),
 	}
 	if profileDir != "" {
 		in.Policies = ReadClientPolicies(filepath.Join(profileDir, "AppData", "Local"), accts)
@@ -225,10 +249,30 @@ func FindOrphans(in Inputs, fs FS) []Orphan {
 		}
 	}
 	var out []Orphan
+	oldOneDrive := map[string]bool{}
+	addOldOneDrive := func(p string) {
+		c := Clean(p)
+		if c == "" || oldOneDrive[c] || c == profile || isVolumeRoot(c) || overlaps(c, active) || !IsWorkOneDriveName(filepath.Base(p)) {
+			return
+		}
+		oldOneDrive[c] = true
+		out = append(out, Orphan{Path: p, TenantRoot: p, Name: filepath.Base(p), OldOneDrive: true})
+	}
+	// Work OneDrive folders OneDrive recorded that still exist but no
+	// signed-in account uses.
+	for _, p := range in.Providers {
+		if t := strings.ToLower(p.LibraryType); p.MountPoint != "" && (t == "personal" || t == "mysite") {
+			if _, err := fs.ReadDir(p.MountPoint); err == nil {
+				addOldOneDrive(p.MountPoint)
+			}
+		}
+	}
 	// Folders in the profile carrying OneDrive's desktop.ini: plain ones are
-	// organisation folders. "OneDrive..." ones are personal OneDrive folders,
-	// which are never reported (a fresh PC always has an unused, empty
-	// "OneDrive" folder) and never scanned as organisation folders.
+	// organisation folders. "OneDrive..." ones are the user's own OneDrive
+	// folders, never scanned as organisation folders. "OneDrive - <Org>"
+	// with no signed-in account is an old work OneDrive and is reported;
+	// the consumer "OneDrive" (or "OneDrive - Personal") placeholder is
+	// not, because a fresh PC signed in to a work account always has one.
 	if in.ProfileDir != "" {
 		entries, _ := fs.ReadDir(in.ProfileDir)
 		for _, e := range entries {
@@ -240,7 +284,7 @@ func FindOrphans(in Inputs, fs FS) []Orphan {
 			odIni := err == nil && strings.Contains(strings.ToLower(decodeText(b)), "onedrive.exe")
 			switch {
 			case strings.HasPrefix(strings.ToLower(e.Name), "onedrive") && (e.IsCloud() || odIni):
-				continue
+				addOldOneDrive(dir)
 			case odIni && e.Attr&fsutil.AttrReparsePoint == 0:
 				addRoot(dir)
 			}
@@ -287,11 +331,32 @@ func FindOrphans(in Inputs, fs FS) []Orphan {
 			out = append(out, o)
 		}
 	}
+	// Folders a technician chose to keep are dropped here, so neither the
+	// alert nor a fix plan ever sees them.
+	kept := out[:0]
+	for _, o := range out {
+		if !in.IsIgnored(o.Path) {
+			kept = append(kept, o)
+		}
+	}
+	out = kept
 	for i := range out {
 		out[i].KnownFolders = in.knownFoldersIn(out[i].Path)
 	}
 	sort.Slice(out, func(i, j int) bool { return Clean(out[i].Path) < Clean(out[j].Path) })
 	return out
+}
+
+// IsWorkOneDriveName reports whether a folder name is a work OneDrive folder,
+// "OneDrive - <Org>", as opposed to the consumer "OneDrive" or
+// "OneDrive - Personal" placeholder.
+func IsWorkOneDriveName(name string) bool {
+	l := strings.ToLower(strings.TrimSpace(name))
+	if !strings.HasPrefix(l, "onedrive - ") {
+		return false
+	}
+	org := strings.TrimSpace(l[len("onedrive - "):])
+	return org != "" && org != "personal"
 }
 
 // knownFor finds re-sync details for a folder: our own cache first, then a

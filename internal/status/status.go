@@ -180,7 +180,10 @@ type Report struct {
 	Summary          string        `json:"summary"`
 	StaleFolderCount int           `json:"staleFolderCount"`
 	StaleFolders     []StaleFolder `json:"staleFolders"`
-	Users            []User        `json:"users"`
+	// IgnoredFolders are folders a technician chose to keep (the machine's
+	// ignore list). They are never counted as stale.
+	IgnoredFolders []IgnoredFolder `json:"ignoredFolders,omitempty"`
+	Users          []User          `json:"users"`
 	// Notes are machine-level remarks shown under the table (e.g. a settings
 	// problem from NinjaOne).
 	Notes []string `json:"notes,omitempty"`
@@ -197,6 +200,12 @@ type StaleFolder struct {
 	User string `json:"user"`
 	Path string `json:"path"`
 	Name string `json:"name"`
+}
+
+// IgnoredFolder is one entry of the technician's ignore list.
+type IgnoredFolder struct {
+	Path string `json:"path"`
+	Note string `json:"note,omitempty"`
 }
 
 // User is one signed-in user's row in the report.

@@ -38,6 +38,11 @@ Admin commands (run from an elevated prompt):
   config import <file>    Validate and import settings from JSON
   config validate <file>  Check a settings file without applying it
 
+  ignore add <folder> [--note "<why>"]
+                          Keep a folder that stopped syncing: stop reporting it
+                          and never include it in a fix (e.g. an archived site)
+  ignore remove <folder>  Report the folder again
+  ignore list             Show the ignore list
   ninja push [--dry-run]  Send the machine status to the NinjaOne custom fields now
   ninja pull [--dry-run]  Apply the settings held in the NinjaOne settings field now
   ninja check             Show whether the NinjaOne agent's command-line tool is usable
@@ -101,6 +106,8 @@ func run(cmd string, args []string) error {
 		return configCmd(args)
 	case "status":
 		return statusCmd(args)
+	case "ignore":
+		return ignoreCmd(args)
 	case "ninja":
 		return ninjaCmd(args)
 	case "check":
@@ -186,6 +193,54 @@ func statusCmd(args []string) error {
 		return err
 	}
 	return status.WriteTable(os.Stdout, r)
+}
+
+func ignoreCmd(args []string) error {
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	switch strings.ToLower(args[0]) {
+	case "list":
+		list := onedrive.IgnoredFolders()
+		if len(list) == 0 {
+			fmt.Println("No folders are ignored.")
+			return nil
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(w, "FOLDER\tNOTE")
+		for _, f := range list {
+			fmt.Fprintf(w, "%s\t%s\n", f.Path, f.Note)
+		}
+		return w.Flush()
+	case "add":
+		fs := flag.NewFlagSet("ignore add", flag.ExitOnError)
+		note := fs.String("note", "", "why the folder is kept (who decided, ticket number)")
+		_ = fs.Parse(args[1:])
+		if fs.NArg() != 1 {
+			return fmt.Errorf("usage: ignore add <folder> [--note \"<why>\"]")
+		}
+		if err := needAdmin(); err != nil {
+			return err
+		}
+		if err := onedrive.AddIgnoredFolder(fs.Arg(0), *note); err != nil {
+			return err
+		}
+		fmt.Printf("Ignoring %s. It will disappear from alerts and the status within a minute.\n", fs.Arg(0))
+		return nil
+	case "remove":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: ignore remove <folder>")
+		}
+		if err := needAdmin(); err != nil {
+			return err
+		}
+		if err := onedrive.RemoveIgnoredFolder(args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("%s is reported again.\n", args[1])
+		return nil
+	}
+	return fmt.Errorf("unknown ignore command %q (add, remove or list)", args[0])
 }
 
 func ninjaCmd(args []string) error {
@@ -348,6 +403,8 @@ func check() error {
 			fmt.Printf("    contains the user's %s folder - will not be fixed automatically\n", strings.Join(o.KnownFolders, "/"))
 		case o.EmptyOrg:
 			fmt.Printf("    empty leftover organisation folder (nothing to re-sync)\n")
+		case o.OldOneDrive:
+			fmt.Printf("    old work OneDrive folder that no signed-in account syncs (nothing to re-sync)\n")
 		case o.CanResync():
 			fmt.Printf("    re-sync: %s\n", o.Library.ResyncURL())
 		case o.WebURL != "":

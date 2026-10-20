@@ -109,6 +109,16 @@ func RenderHTML(r Report, loc *time.Location) string {
 	for _, n := range r.Notes {
 		fmt.Fprintf(&b, `<p style="margin:6px 0 0 0;color:#c62828">%s</p>`, e(n))
 	}
+	if len(r.IgnoredFolders) > 0 {
+		b.WriteString(`<p style="margin:6px 0 0 0;color:#616161;font-size:12px">Kept on purpose (ignore list):`)
+		for _, ig := range r.IgnoredFolders {
+			b.WriteString("<br>" + e(ig.Path))
+			if ig.Note != "" {
+				b.WriteString(" &ndash; " + e(ig.Note))
+			}
+		}
+		b.WriteString(`</p>`)
+	}
 	inst := ""
 	if r.OneDriveInstall.Version != "" {
 		inst = fmt.Sprintf(" &nbsp;|&nbsp; OneDrive %s (%s)", e(r.OneDriveInstall.Version), e(or(r.OneDriveInstall.Type, "install type unknown")))
@@ -298,6 +308,12 @@ func WriteTable(w io.Writer, r Report) error {
 		fmt.Fprintf(w, "\nFolders not syncing (%d):\n", len(r.StaleFolders))
 		for _, f := range r.StaleFolders {
 			fmt.Fprintf(w, "  %s  %s\n", f.User, f.Path)
+		}
+	}
+	if len(r.IgnoredFolders) > 0 {
+		fmt.Fprintf(w, "\nKept on purpose, not reported (%d):\n", len(r.IgnoredFolders))
+		for _, f := range r.IgnoredFolders {
+			fmt.Fprintf(w, "  %s  %s\n", f.Path, f.Note)
 		}
 	}
 	return nil

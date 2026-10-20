@@ -121,7 +121,7 @@ func orphanItems(orphans []onedrive.Orphan, note func(onedrive.Orphan) string) (
 func orphanSpec(c config.Config, orphans []onedrive.Orphan, a Actions) popup.Spec {
 	one, many := "A SharePoint library has", "SharePoint libraries have"
 	for _, o := range orphans {
-		if o.EmptyOrg {
+		if o.EmptyOrg || o.OldOneDrive {
 			one, many = "A OneDrive folder has", "OneDrive folders have"
 		}
 	}
