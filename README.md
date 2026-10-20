@@ -424,6 +424,7 @@ And for information, if you want the full picture:
 | 3004 | Information | OneDrive is running again |
 | 3005 | Information | OneDrive had stopped and was restarted automatically (with the attempt number) |
 | 4002 | Information | No more broken folders |
+| 4003 | Information | A user asked support to stop reporting a folder they want to keep (an e-mail was started) |
 | 5001 | Information | A fix was approved (who approved it, and the plan) |
 | 5011 | Information | The approved fix started working on the files (use this, not 5001, for "a fix ran") |
 | 5002 | Information | A fix completed: every folder was removed after saving it |
