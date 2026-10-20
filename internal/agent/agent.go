@@ -544,6 +544,10 @@ func (a *Agent) email() {
 	}
 	s := a.collect(cfg)
 	report := Report(cfg, s, LogPath())
+	if a.ui.CtrlHeld() { // hidden engineering variant: copy the mailto: link
+		a.copyMailto(cfg, supportMailto(cfg, addr, s, false))
+		return
+	}
 	method := strings.ToLower(cfg.SupportEmailMethod)
 	if method == "draft" || (method != "link" && winapi.HasFileHandler(".eml")) {
 		path, err := writeSupportEML(supportEML(cfg, addr, s, report))
@@ -565,6 +569,19 @@ func (a *Agent) email() {
 		winapi.Info(cfg.Title(), "A new e-mail to "+addr+" has been started.\n\n"+
 			"The full details for support have been copied: click into the e-mail where it says so and press Ctrl+V to paste them.")
 	}
+}
+
+// copyMailto puts a mailto: link on the clipboard (Ctrl+click on an e-mail
+// action). Undocumented on purpose: it is for technicians who want to paste
+// the link into a browser or a ticket.
+func (a *Agent) copyMailto(cfg config.Config, link string) {
+	if err := a.ui.CopyText(link); err != nil {
+		a.log.Printf("copy mailto: %v", err)
+		winapi.Error(cfg.Title(), "The link could not be copied: "+err.Error())
+		return
+	}
+	a.log.Printf("mailto: link copied to the clipboard (Ctrl+click)")
+	winapi.Info(cfg.Title(), "The mailto: link has been copied to the clipboard.")
 }
 
 // website opens the support website.

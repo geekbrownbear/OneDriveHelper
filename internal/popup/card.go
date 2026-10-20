@@ -387,6 +387,7 @@ func (c *card) click(i int) {
 		call(pPostMessageW, c.hwnd, wmNull, 0, 0)
 		call(pDestroyMenu, menu)
 		if cmd >= 1 && cmd <= len(b.Menu) {
+			c.m.ctrl.Store(ctrlDown()) // Ctrl at the moment the entry was chosen
 			if b.Dismiss {
 				c.m.setVisible(id, false)
 				c.m.hide(id)

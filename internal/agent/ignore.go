@@ -22,6 +22,7 @@ import (
 func (a *Agent) requestIgnore(o onedrive.Orphan) {
 	cfg := config.Load()
 	addr := cfg.SupportEmailAddress()
+	ctrl := a.ui.CtrlHeld() // Ctrl+click: copy the mailto: link instead of opening the mail program
 	text := "Ignoring a folder that has stopped syncing can cause unforeseen issues: anything saved in it is NOT backed up, " +
 		"and nobody will be warned about it again.\n\n" +
 		"But keeping it can be a valid business need, for example a copy of an archived site that you still use for reference.\n\n" +
@@ -59,6 +60,12 @@ func (a *Agent) requestIgnore(o onedrive.Orphan) {
 	a.log.Printf("user asked support to ignore %s", o.Path)
 	a.ev.Info(elog.IgnoreRequested, fmt.Sprintf("%s asked support to stop monitoring %s (they want to keep the folder). An e-mail to %s was started.", a.fullName, o.Path, addr))
 
+	link := "mailto:" + addr + "?subject=" + url.QueryEscape(subject) + "&body=" + url.QueryEscape(plain)
+	link = strings.ReplaceAll(link, "+", "%20")
+	if ctrl {
+		a.copyMailto(cfg, link)
+		return
+	}
 	method := strings.ToLower(cfg.SupportEmailMethod)
 	if method == "draft" || (method != "link" && winapi.HasFileHandler(".eml")) {
 		path, err := writeSupportEML(emlDraft(addr, subject, plain, htmlBody))
@@ -69,8 +76,6 @@ func (a *Agent) requestIgnore(o onedrive.Orphan) {
 		}
 		a.log.Printf("ignore request draft: %v; falling back to a mailto: link", err)
 	}
-	link := "mailto:" + addr + "?subject=" + url.QueryEscape(subject) + "&body=" + url.QueryEscape(plain)
-	link = strings.ReplaceAll(link, "+", "%20")
 	if err := winapi.ShellOpen(link); err != nil {
 		a.log.Printf("ignore request mailto: %v", err)
 		winapi.Info(cfg.Title(), "No e-mail program could be opened. Please e-mail "+addr+" and ask for this folder to be excluded from monitoring:\n\n"+o.Path)

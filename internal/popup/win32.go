@@ -33,6 +33,7 @@ var (
 	pDrawTextW              = user32.NewProc("DrawTextW")
 	pLoadCursorW            = user32.NewProc("LoadCursorW")
 	pSetCursor              = user32.NewProc("SetCursor")
+	pGetKeyState            = user32.NewProc("GetKeyState")
 	pSystemParametersInfoW  = user32.NewProc("SystemParametersInfoW")
 	pTrackMouseEvent        = user32.NewProc("TrackMouseEvent")
 	pSetTimer               = user32.NewProc("SetTimer")

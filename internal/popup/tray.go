@@ -209,6 +209,7 @@ func (m *Manager) trayMenu() {
 	cmd := int(call(pTrackPopupMenu, menu, tpmReturnCmd|tpmNoNotify|tpmRightBtn|tpmBottomAlign, uintptr(pt.X), uintptr(pt.Y), 0, m.tray.hwnd, 0))
 	call(pPostMessageW, m.tray.hwnd, wmNull, 0, 0)
 	if cmd >= 1 && cmd <= len(items) && items[cmd-1].Action != nil {
+		m.ctrl.Store(ctrlDown())
 		go items[cmd-1].Action()
 	}
 }
