@@ -3,16 +3,19 @@
   Builds a release: zips for x64 and ARM64 plus SHA256SUMS.txt in .\release,
   named the way the README's RMM install script expects.
 .EXAMPLE
+  .\release.ps1                 # version from the VERSION file
   .\release.ps1 -Version 0.8.0
   # release\OneDriveHelper-v0.8.0-x64.zip
   # release\OneDriveHelper-v0.8.0-arm64.zip
   # release\SHA256SUMS.txt
 #>
 param(
-    [Parameter(Mandatory = $true)][string]$Version
+    [string]$Version = ""
 )
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+if (-not $Version) { $Version = (Get-Content VERSION -Raw).Trim() }
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3 (got '$Version')" }
 $v = "v$Version"

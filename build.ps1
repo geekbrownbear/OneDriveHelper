@@ -3,14 +3,19 @@
   Builds OneDriveHelper.exe, OneDriveHelperAgent.exe and OneDriveHelperConfig.exe for amd64 and arm64 into .\dist\<arch>.
   For a release (zips + SHA256SUMS.txt) use .\release.ps1.
 .EXAMPLE
+  .\build.ps1               # version from the VERSION file
   .\build.ps1 -Version 1.0.0
 #>
 param(
-    [string]$Version = "dev",
+    [string]$Version = "",
     [string[]]$Arch = @("amd64", "arm64")
 )
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+# The version comes from the VERSION file unless given on the command line.
+if (-not $Version) { $Version = (Get-Content VERSION -Raw).Trim() }
+Write-Host "Building OneDrive Helper $Version"
 
 $pkg = "github.com/geekbrownbear/OneDriveHelper/internal/version"
 $env:GOOS = "windows"

@@ -447,10 +447,10 @@ You need [Go](https://go.dev/dl/) 1.27 or newer. The only third-party code is Go
 ```powershell
 git clone https://github.com/geekbrownbear/OneDriveHelper.git
 cd OneDriveHelper
-.\build.ps1 -Version 1.0.0
+.\build.ps1
 ```
 
-That runs the checks and tests, then builds both architectures into `dist\amd64` and `dist\arm64`. Pushing a tag such as `v1.0.0` makes the GitHub Actions workflow do the same and attach the zips and `SHA256SUMS.txt` to a draft release. If you'd rather do it by hand:
+That runs the checks and tests, then builds both architectures into `dist\amd64` and `dist\arm64`. The version number comes from the `VERSION` file at the root of the repository (`Get-Content VERSION` shows it); `-Version` overrides it for a one-off build. A binary reports its number with `OneDriveHelper.exe version`, and the tray icon tooltip shows it too. To release, bump `VERSION`, commit, and push a matching tag such as `v0.9.0`: the GitHub Actions workflow builds both architectures and attaches the zips and `SHA256SUMS.txt` to a draft release. If you'd rather do it by hand:
 
 ```powershell
 go build -o OneDriveHelper.exe ./cmd/OneDriveHelper

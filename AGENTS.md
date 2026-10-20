@@ -9,7 +9,7 @@ Go 1.27+ on PATH (for example `C:\Program Files\Go\bin`; in PowerShell `$env:Pat
 - Format: `gofmt -w .`
 - Vet: `go vet ./...`
 - Test: `go test ./...`
-- Full build (vet + test + amd64/arm64 into `dist\`): `.\build.ps1 -Version x.y.z` (PowerShell)
+- Full build (vet + test + amd64/arm64 into `dist\`): `.\build.ps1` (PowerShell). The version comes from the `VERSION` file; `-Version x.y.z` overrides it. Bump `VERSION` and tag `vX.Y.Z` to release.
 - Release (build + `release\OneDriveHelper-vX.Y.Z-x64.zip`, `-arm64.zip`, `SHA256SUMS.txt`): `.\release.ps1 -Version x.y.z`
 - CI: `.github/workflows/test.yml` (gofmt, vet, test, arm64 build) on every push and pull request.
 - Safe live checks on a dev box (no admin, no changes): `dist\amd64\OneDriveHelper.exe check`, `... remediate --dry-run`, `dist\amd64\OneDriveHelperAgent.exe test-popup`, `OneDriveHelperAgent.exe agent --standalone`
