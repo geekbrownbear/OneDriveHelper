@@ -1,7 +1,8 @@
 name: Build and release
 
 # test.yml runs gofmt/vet/test on every push; this one builds and drafts a
-# release when a version tag is pushed (or on demand).
+# release. Either push a tag vX.Y.Z, or run it from the Actions tab: then the
+# version comes from the VERSION file and the tag is created for you.
 on:
   push:
     tags: ["v*"]
@@ -47,7 +48,9 @@ jobs:
         id: ver
         shell: pwsh
         run: |
-          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF.Substring(11) } else { "0.0.0-$($env:GITHUB_SHA.Substring(0,7))" }
+          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF.Substring(11) }
+               elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { (Get-Content VERSION -Raw).Trim() }
+               else { "0.0.0-$($env:GITHUB_SHA.Substring(0,7))" }
           $arch = if ($env:GOARCH -eq 'amd64') { 'x64' } else { $env:GOARCH }
           "version=$v" >> $env:GITHUB_OUTPUT
           "arch=$arch" >> $env:GITHUB_OUTPUT
@@ -90,12 +93,13 @@ jobs:
 
   release:
     name: Draft release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -105,9 +109,15 @@ jobs:
           cd artifacts
           sha256sum *.zip | sed 's/  / /' | awk '{print toupper($1) "  " $2}' > SHA256SUMS.txt
           cat SHA256SUMS.txt
-      - name: Create draft release
+      - name: Create draft release (and the tag, when run from the Actions tab)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --generate-notes \
-            --title "OneDrive Helper $GITHUB_REF_NAME" artifacts/*.zip artifacts/SHA256SUMS.txt
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(tr -d '[:space:]' < VERSION)"
+          fi
+          # gh creates the tag at --target when it does not exist yet.
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --generate-notes \
+            --title "OneDrive Helper $tag" artifacts/*.zip artifacts/SHA256SUMS.txt
