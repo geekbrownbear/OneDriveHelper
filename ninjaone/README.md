@@ -78,8 +78,8 @@ Add `Install-OneDriveHelper.ps1` as a script (PowerShell, run as **System**) wit
 
 | Variable | Type | Value |
 |---|---|---|
-| `version` | String | Release tag, e.g. `v1.0.0` |
-| `hashX64` | String | SHA-256 of `OneDriveHelper-v1.0.0-x64.zip`, from `SHA256SUMS.txt` on the release |
+| `version` | String | Release tag, e.g. `v0.9.0` |
+| `hashX64` | String | SHA-256 of `OneDriveHelper-v0.9.0-x64.zip`, from `SHA256SUMS.txt` on the release |
 | `hashArm64` | String | SHA-256 of the arm64 zip |
 | `downloadBase` | String | Optional. Your own file share or web server holding the zips |
 | `settingsJson` | String (multi-line) | Optional. Settings to apply at install for PCs where `ODHelperConfig` isn't used |
@@ -97,7 +97,39 @@ The user's **Fix (admin)** button runs `OneDriveHelperAgent.exe remediate-approv
 * `C:\Program Files\OneDriveHelper\OneDriveHelperAgent.exe` (per user; needs an elevation policy for the approval step)
 * `C:\Program Files\OneDriveHelper\OneDriveHelperConfig.exe` (settings tool, technicians only)
 
-Match on the code-signing certificate if you sign the release (see the release workflow); otherwise by hash, which changes every release.
+Match on the code-signing certificate if you sign the release (next section); otherwise by hash, which changes every release.
+
+### Code signing with your own certificate
+
+A public code-signing certificate costs money because a CA vouches for your identity. For PCs you manage you don't need that: make a self-signed certificate once, let the release workflow sign with it, and tell your fleet to trust it.
+
+1. On a PC you control, create the certificate and export both halves:
+
+   ```powershell
+   $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Your MSP OneDrive Helper" `
+       -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddYears(5) `
+       -CertStoreLocation Cert:\CurrentUser\My
+   Export-PfxCertificate -Cert $cert -FilePath .\codesign.pfx -Password (Read-Host -AsSecureString "PFX password")
+   Export-Certificate -Cert $cert -FilePath .\codesign.cer
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes(".\codesign.pfx")) | Set-Clipboard
+   ```
+
+2. In the GitHub repository, add the secrets `CODESIGN_PFX` (the base64 on the clipboard) and `CODESIGN_PASSWORD`. The next release is signed and timestamped.
+
+3. Push the public half to the fleet with a NinjaOne script run as System (paste the base64 of `codesign.cer` into `$cer`):
+
+   ```powershell
+   $cer = '<base64 of codesign.cer>'
+   $bytes = [Convert]::FromBase64String($cer)
+   $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new($bytes)
+   foreach ($store in 'Root', 'TrustedPublisher') {
+       $s = [Security.Cryptography.X509Certificates.X509Store]::new($store, 'LocalMachine')
+       $s.Open('ReadWrite'); $s.Add($cert); $s.Close()
+   }
+   Write-Host "Trusted $($cert.Subject) ($($cert.Thumbprint))"
+   ```
+
+After that the UAC prompt behind **Fix (admin)** shows your name instead of "Unknown publisher", and a ThreatLocker policy can match on the certificate. What a self-signed certificate does not give you is SmartScreen reputation, which only matters when someone double-clicks a download on a PC you don't manage. If you later want a publicly trusted certificate, Azure Trusted Signing is the cheapest option, and SignPath Foundation signs open-source projects free of charge after a review.
 
 ## 4. Conditions and tickets
 

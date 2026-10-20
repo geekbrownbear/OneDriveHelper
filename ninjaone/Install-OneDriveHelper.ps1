@@ -8,7 +8,7 @@
     ODHelperConfig custom field (if you set one up) and begins reporting to the custom fields.
 
     NinjaOne script variables (they arrive as environment variables):
-      version      Release tag, e.g. v1.0.0                                   (required)
+      version      Release tag, e.g. v0.9.0                                   (required)
       hashX64      SHA-256 of OneDriveHelper-<version>-x64.zip from SHA256SUMS.txt
       hashArm64    SHA-256 of OneDriveHelper-<version>-arm64.zip
       downloadBase Where the zips are (default: this project's GitHub releases).
@@ -31,7 +31,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-if (-not $Version) { Write-Host 'The "version" script variable is required (e.g. v1.0.0).'; exit 2 }
+if (-not $Version) { Write-Host 'The "version" script variable is required (e.g. v0.9.0).'; exit 2 }
 if ($Version -notmatch '^v') { $Version = "v$Version" }
 if (-not $DownloadBase) { $DownloadBase = "https://github.com/geekbrownbear/OneDriveHelper/releases/download/$Version" }
 $unverified = $AllowUnverified -in @('true', '1', 'yes')

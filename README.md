@@ -2,11 +2,9 @@
 
 A small Windows tool that keeps an eye on OneDrive for your users, tells them when something has quietly gone wrong, restarts OneDrive when it stops, and reports all of it into NinjaOne custom fields so your policy conditions can open the ticket.
 
-**Current version: 0.8.1** ([release notes and downloads](https://github.com/denismcapple/OneDriveHelper/releases/latest)). To see which version a PC is running, hover over the OneDrive Helper icon next to the clock, or run `"C:\Program Files\OneDriveHelper\OneDriveHelper.exe" version`.
+**Current version: 0.9.0** ([release notes and downloads](https://github.com/geekbrownbear/OneDriveHelper/releases/latest)). To see which version a PC is running, hover over the OneDrive Helper icon next to the clock, or run `"C:\Program Files\OneDriveHelper\OneDriveHelper.exe" version`. The NinjaOne status table shows it too.
 
-> **Which OneDrive folders count.** The consumer OneDrive placeholder (`OneDrive`, `OneDrive - Personal`) is never reported: a freshly set-up PC signed in to a work account always has an empty, unused one. An old *work* OneDrive (`OneDrive - Old Company`) that no signed-in account uses any more **is** reported, because people keep saving into it after leaving an organisation or a rename, and nothing they save goes anywhere.
->
-> **New in 0.8.0: a much safer fix.** The folder fix is the only part of the tool that deletes anything, so it now moves each folder out of the way before saving it, deletes only files it has proven it saved, puts everything back if anything is in doubt, and recovers by itself if it's interrupted. Upgrades wait for a fix in progress, and roll back if they fail. The details are in [How the fix works](#how-the-fix-works).
+> **What's in 0.9.0.** Everything from the upstream 0.8.1 (the journaled, verified fix with recovery; atomic upgrades; the three-valued OneDrive process state) plus the NinjaOne integration: the service writes the `ODErrors`, `ODHealth`, `ODStaleFolders` and `ODLastReport` custom fields itself and reads each customer's settings from `ODHelperConfig`; a technician ignore list for folders a user keeps on purpose, with a *keep this folder* link in the alert that e-mails support; old work `OneDrive - Company` folders are reported again while the consumer placeholder stays quiet; and a one-click release from the Actions tab.
 
 <p align="center">
   <img src="docs/images/status-problems.png" width="716" alt="OneDrive Helper status window listing folders that have stopped syncing">
@@ -32,16 +30,16 @@ We got tired of finding out about these the hard way, so we wrote something that
 * **Finds folders that have stopped syncing.** It compares what's on disk with what OneDrive is actually syncing. It catches:
   * library folders OneDrive has dropped
   * leftover organisation folders
-
   * old work `OneDrive - Something` folders that no signed-in account uses any more
 
-  The consumer `OneDrive` placeholder is never flagged.
+  The consumer `OneDrive` placeholder is never flagged, and a technician can put a folder the user keeps on purpose on an ignore list.
 * **Explains it in plain English.** Every alert has a **What does this mean?** link written for people who don't know or care how OneDrive works.
 * **Makes it easy to get help.** **Contact support** offers to e-mail your service desk with a full diagnostic report already in the message, or to open your support website.
 * **Fixes broken folders safely**, after an administrator approves. It moves the folder aside, saves a copy of every file stored on the PC, deletes only the files it has proven it saved, then asks OneDrive to sync the library again. If anything is in doubt, nothing is deleted and the folder goes back where it was.
 * **Puts a status icon in the system tray**, so when a user rings you, you can see straight away what's wrong, even if they closed the alert.
-* **Reports to NinjaOne custom fields.** The service keeps `ODErrors` (a per-user status table), `ODHealth` (Healthy / Warning / Critical / Stale / NoUser), `ODStaleFolders` (how many folders stopped syncing) and `ODLastReport` up to date, within a minute of a change. A policy condition on `ODStaleFolders > 0` opens the Halo ticket and resolves it when the user fixes the folder.
+* **Reports to NinjaOne custom fields.** The service keeps `ODErrors` (a per-user status table), `ODHealth` (Healthy / Warning / Critical / Stale / NoUser), `ODStaleFolders` (how many folders stopped syncing) and `ODLastReport` up to date, within a minute of a change. A policy condition on `ODStaleFolders > 0` opens the PSA ticket and resolves it when the folder is fixed or ignored.
 * **Takes its settings from NinjaOne.** Paste a settings file into the organization-level `ODHelperConfig` field once per customer; every PC in that organization picks it up within the hour.
+* **Lets users ask to keep a folder.** Under every folder in the alert there is a *keep this folder* link that warns them and starts an e-mail to your service desk. The technician decides, and ignores the folder from NinjaOne with one script.
 * **Writes everything to the Windows event log** as well, for event-based conditions.
 * **Can be branded per customer**: company name, support contact, colours and wording.
 
@@ -81,7 +79,7 @@ Each alert can be ignored for a while (5 minutes, 30 minutes, until the next res
 
 <img src="docs/images/tray-icons.png" width="160" alt="Tray icons: green tick, amber and red exclamation marks">
 
-Hover over it to see the version and a one-line summary, for example "AcmeCorp - OneDrive Helper v0.8.1 / Everything looks good". Click it to see the status window (the screenshot at the top of this page), which also lists any fix that didn't finish. Right-click for:
+Hover over it to see the version and a one-line summary, for example "AcmeCorp - OneDrive Helper v0.9.0 / Everything looks good". Click it to see the status window (the screenshot at the top of this page), which also lists any fix that didn't finish. Right-click for:
 
 * show status
 * show alerts again
@@ -137,7 +135,13 @@ Each zip contains three programs:
 | `OneDriveHelperAgent.exe` | The part that runs for each user and shows the alerts |
 | `OneDriveHelperConfig.exe` | The settings tool |
 
-Releases are built by the GitHub Actions workflow in this repository. They are code-signed only if the repository has a signing certificate configured (`CODESIGN_PFX` / `CODESIGN_PASSWORD` secrets); otherwise SmartScreen or your antivirus may be wary of them, and application control such as ThreatLocker has to match by hash. If you'd rather not run binaries built by someone else, the full source is here and building it yourself takes a couple of minutes (see [Building from source](#building-from-source)).
+Releases are built by the GitHub Actions workflow in this repository. If you'd rather not run binaries built by someone else, the full source is here and building it yourself takes a couple of minutes (see [Building from source](#building-from-source)).
+
+### Code signing
+
+The workflow signs the three programs when the repository has the secrets `CODESIGN_PFX` (a PFX file, base64) and `CODESIGN_PASSWORD`, with a timestamp so signatures outlive the certificate. Without them the binaries are unsigned: SmartScreen may be wary on an unmanaged PC, the UAC prompt behind **Fix (admin)** says "Unknown publisher", and application control such as ThreatLocker has to match by hash, which changes every release.
+
+You don't need a paid certificate for a fleet you manage. Make a self-signed code-signing certificate once, give the workflow the PFX, and push the public half to every PC with NinjaOne (into `Trusted Root Certification Authorities` and `Trusted Publishers`). Windows then shows your name on the UAC prompt and ThreatLocker can match on the certificate. [ninjaone/README.md](ninjaone/README.md#code-signing-with-your-own-certificate) has the commands.
 
 Verify a download in PowerShell:
 
@@ -154,7 +158,7 @@ Get-FileHash .\OneDriveHelper-vX.Y.Z-x64.zip -Algorithm SHA256
 
 ## Installing
 
-Unzip, then from an **elevated** command prompt or PowerShell, in the unzipped folder:
+With NinjaOne, use [`ninjaone/Install-OneDriveHelper.ps1`](ninjaone/Install-OneDriveHelper.ps1) (see [Deploying with NinjaOne](#deploying-with-ninjaone)). By hand, for a test PC: unzip, then from an **elevated** command prompt or PowerShell, in the unzipped folder:
 
 ```powershell
 .\OneDriveHelper.exe install                          # default settings
@@ -216,7 +220,7 @@ Exit codes are `0` for success, `1` for an error (the reason is printed) and `2`
 
 ### The settings file
 
-Settings files are plain JSON using the setting names below. They can be partial: anything you leave out keeps its default. Here's a typical one for a customer:
+Settings files are plain JSON using the setting names below. They can be partial: anything you leave out keeps its default. With NinjaOne you don't deploy the file at all: paste the same JSON into the organization's `ODHelperConfig` custom field and every PC in that organization applies it within the hour (and at once after `OneDriveHelper.exe ninja pull`). While that field has content it is the source of truth; a change made locally in the settings tool is overwritten at the next check. Here's a typical one for a customer:
 
 ```json
 {
@@ -277,12 +281,12 @@ Anything you put in `HKLM\SOFTWARE\Policies\OneDriveHelper`, using the same name
 
 The full walk-through is in [ninjaone/README.md](ninjaone/README.md). In short:
 
-1. Create the custom fields `ODErrors`, `ODHealth`, `ODStaleFolders`, `ODLastReport` (device) and `ODHelperConfig` (organization).
-2. Paste each customer's settings JSON into their `ODHelperConfig`.
-3. Add [`ninjaone/Install-OneDriveHelper.ps1`](ninjaone/Install-OneDriveHelper.ps1) as a script with the `version` and hash variables, and run it on the devices.
+1. Create the custom fields `ODErrors` (WYSIWYG), `ODHealth` (dropdown), `ODStaleFolders` (integer) and `ODLastReport` (date/time) at device scope, and `ODHelperConfig` (multi-line text) with both the Organization and the Device scope, so devices inherit the organization's value.
+2. Paste each customer's settings JSON into their organization's `ODHelperConfig`.
+3. Add the three scripts from `ninjaone/` with their script variables: [`Install-OneDriveHelper.ps1`](ninjaone/Install-OneDriveHelper.ps1) (version and hashes), [`Ignore-OneDriveFolder.ps1`](ninjaone/Ignore-OneDriveFolder.ps1) (folder, note, remove) and [`Uninstall-OneDriveHelper.ps1`](ninjaone/Uninstall-OneDriveHelper.ps1). Run the installer on the devices.
 4. Add the policy conditions: `ODStaleFolders > 0` for the "verify with the user" ticket, `ODHealth = Critical` for failed fixes, `ODLastReport` older than a day for PCs that stop reporting.
 
-The service does the reporting itself, so there is no scheduled script to keep alive. A fallback script is included for tenants where `ninjarmm-cli` can't be used from a service.
+The service does the reporting itself, so there is no scheduled script to keep alive. [`ninjaone/Report-OneDriveStatus.ps1`](ninjaone/Report-OneDriveStatus.ps1) is a fallback for a tenant where `ninjarmm-cli` can't be used from a service.
 
 ### What gets reported
 
@@ -315,7 +319,7 @@ Everything above except the custom-field push works anywhere: the event log, `st
 ```powershell
 # OneDrive Helper: install or upgrade with customer settings
 $ErrorActionPreference = 'Stop'
-$Version = 'v1.0.0'
+$Version = 'v0.9.0'
 $Hashes  = @{                       # from SHA256SUMS.txt on the release page
     'x64'   = '<paste from SHA256SUMS.txt>'
     'arm64' = '<paste from SHA256SUMS.txt>'
@@ -450,7 +454,9 @@ cd OneDriveHelper
 .\build.ps1
 ```
 
-That runs the checks and tests, then builds both architectures into `dist\amd64` and `dist\arm64`. The version number comes from the `VERSION` file at the root of the repository (`Get-Content VERSION` shows it); `-Version` overrides it for a one-off build. A binary reports its number with `OneDriveHelper.exe version`, and the tray icon tooltip shows it too. To release, bump `VERSION`, commit, and push a matching tag such as `v0.9.0`: the GitHub Actions workflow builds both architectures and attaches the zips and `SHA256SUMS.txt` to a draft release. If you'd rather do it by hand:
+That runs the checks and tests, then builds both architectures into `dist\amd64` and `dist\arm64`. The version number comes from the `VERSION` file at the root of the repository (`Get-Content VERSION` shows it); `-Version` overrides it for a one-off build. A binary reports its number with `OneDriveHelper.exe version`, and the tray icon tooltip shows it too.
+
+To release: bump `VERSION`, merge to `main`, then open **Actions → Build and release → Run workflow**. The workflow tests on Windows, builds both architectures, signs them if a certificate is configured, and drafts a release with the zips and `SHA256SUMS.txt`, creating the `vX.Y.Z` tag when you publish the draft. Pushing the tag yourself does the same. If you'd rather build by hand:
 
 ```powershell
 go build -o OneDriveHelper.exe ./cmd/OneDriveHelper
@@ -471,12 +477,13 @@ These need no admin rights; run them as the user:
 & "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" remediate --dry-run   # exactly what a fix would do, changes nothing
 & "C:\Program Files\OneDriveHelper\OneDriveHelperAgent.exe" test-popup       # show the alerts
 & "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" status                # the machine status the service reports
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ignore list           # folders a technician chose to keep
 ```
 
 For the NinjaOne side (from a NinjaOne remote shell, which runs as SYSTEM):
 
 ```powershell
-& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja check            # is ninjarmm-cli there, which fields are used
+& "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja check            # is ninjarmm-cli there, which fields are used, which ODHealth options exist
 & "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja push --dry-run   # the HTML that would go to ODErrors
 & "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja push             # update the fields now
 & "C:\Program Files\OneDriveHelper\OneDriveHelper.exe" ninja pull --dry-run   # what ODHelperConfig holds
