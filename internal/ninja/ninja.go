@@ -1,0 +1,224 @@
+// Package ninja talks to the NinjaOne agent's command-line tool
+// (ninjarmm-cli.exe) to read and write custom fields from the service.
+//
+// The tool is installed with the NinjaOne agent and must run as SYSTEM, which
+// the OneDrive Helper service is. Values are written with "set <field> <value>"
+// or, for long values such as the WYSIWYG table, "set --stdin <field>" with
+// the value piped in. Fields are read with "get <field>".
+package ninja
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// ErrNotInstalled means the NinjaOne agent (and so its CLI) is not on this PC.
+var ErrNotInstalled = errors.New("ninjarmm-cli.exe not found; is the NinjaOne agent installed?")
+
+// Timeout bounds every CLI call so a wedged agent never stalls the service.
+const Timeout = 30 * time.Second
+
+// MaxValueBytes is the most we send to one field. NinjaOne collapses fields
+// over 10,000 characters in the UI, and the WYSIWYG renderer in
+// internal/status keeps its output well under this.
+const MaxValueBytes = 200 << 10
+
+// CLI runs ninjarmm-cli.
+type CLI struct {
+	Path string // full path of ninjarmm-cli.exe
+}
+
+// DefaultPath is where the NinjaOne agent installs its CLI on Windows.
+func DefaultPath() string {
+	pd := os.Getenv("ProgramData")
+	if pd == "" {
+		pd = `C:\ProgramData`
+	}
+	return filepath.Join(pd, "NinjaRMMAgent", "ninjarmm-cli.exe")
+}
+
+// Find returns the CLI if the NinjaOne agent is installed. The path is fixed
+// (not taken from the registry or PATH) and must be a regular file, so a
+// user-planted executable is never run as SYSTEM.
+func Find() (*CLI, error) {
+	return FindAt(DefaultPath())
+}
+
+// FindAt is Find for a specific path (tests).
+func FindAt(path string) (*CLI, error) {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return nil, ErrNotInstalled
+	}
+	return &CLI{Path: path}, nil
+}
+
+// Set writes a short value to a custom field.
+func (c *CLI) Set(ctx context.Context, field, value string) error {
+	if err := checkField(field); err != nil {
+		return err
+	}
+	if len(value) > MaxValueBytes {
+		return fmt.Errorf("value for %s is %d bytes (limit %d)", field, len(value), MaxValueBytes)
+	}
+	// Long or multi-line values go through stdin; the command line would mangle them.
+	if len(value) > 2000 || strings.ContainsAny(value, "\r\n\"") {
+		return c.SetStdin(ctx, field, value)
+	}
+	_, err := c.run(ctx, nil, "set", field, value)
+	return err
+}
+
+// SetStdin writes a value through the CLI's standard input (for HTML and
+// multi-line text).
+func (c *CLI) SetStdin(ctx context.Context, field, value string) error {
+	if err := checkField(field); err != nil {
+		return err
+	}
+	if len(value) > MaxValueBytes {
+		return fmt.Errorf("value for %s is %d bytes (limit %d)", field, len(value), MaxValueBytes)
+	}
+	_, err := c.run(ctx, strings.NewReader(value), "set", "--stdin", field)
+	return err
+}
+
+// Options lists a dropdown field's options as name -> GUID ("options
+// <field>" prints one "GUID=Name" line per option).
+func (c *CLI) Options(ctx context.Context, field string) (map[string]string, error) {
+	if err := checkField(field); err != nil {
+		return nil, err
+	}
+	out, err := c.read(ctx, "options", field)
+	if err != nil {
+		return nil, err
+	}
+	return ParseOptions(out), nil
+}
+
+// read runs a command that prints a value. On Windows the CLI writes to the
+// console unless told --direct-out, which a service capturing stdout never
+// sees; so that flag is passed first, and dropped only if the CLI rejects it.
+func (c *CLI) read(ctx context.Context, cmd, field string) (string, error) {
+	out, err := c.run(ctx, nil, cmd, field, "--direct-out")
+	if err == nil {
+		return out, nil
+	}
+	fallback, ferr := c.run(ctx, nil, cmd, field)
+	if ferr != nil {
+		return "", err // report the first attempt's error
+	}
+	return fallback, nil
+}
+
+// ParseOptions parses "GUID=Name" lines.
+func ParseOptions(out string) map[string]string {
+	opts := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		guid, name, ok := strings.Cut(line, "=")
+		if !ok || guid == "" || name == "" {
+			continue
+		}
+		opts[strings.TrimSpace(name)] = strings.TrimSpace(guid)
+	}
+	return opts
+}
+
+// SetDropdown selects an option of a dropdown field by name. NinjaOne wants
+// the option's GUID, so the options are looked up first; the name is matched
+// case-insensitively. If the options can't be listed, the name is sent as is.
+func (c *CLI) SetDropdown(ctx context.Context, field, option string) error {
+	opts, err := c.Options(ctx, field)
+	if err != nil {
+		if setErr := c.Set(ctx, field, option); setErr != nil {
+			return fmt.Errorf("%w (and listing its options failed: %v)", setErr, err)
+		}
+		return nil
+	}
+	for name, guid := range opts {
+		if strings.EqualFold(name, option) {
+			return c.Set(ctx, field, guid)
+		}
+	}
+	if len(opts) == 0 {
+		return fmt.Errorf("dropdown %s: the NinjaOne CLI returned no options; check the field exists, is a dropdown with the options Healthy, Warning, Critical, Stale, NoUser, NotInstalled, and allows Scripts: Read/Write", field)
+	}
+	names := make([]string, 0, len(opts))
+	for name := range opts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return fmt.Errorf("dropdown %s has no option %q (options: %s)", field, option, strings.Join(names, ", "))
+}
+
+// Get reads a custom field. An unset field returns "" and no error.
+func (c *CLI) Get(ctx context.Context, field string) (string, error) {
+	if err := checkField(field); err != nil {
+		return "", err
+	}
+	out, err := c.read(ctx, "get", field)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(out, "\r\n"), nil
+}
+
+func checkField(field string) error {
+	if field == "" || strings.ContainsAny(field, " \t\r\n\"'") {
+		return fmt.Errorf("%q is not a valid custom field name", field)
+	}
+	return nil
+}
+
+func (c *CLI) run(ctx context.Context, stdin *strings.Reader, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.Path, args...)
+	cmd.Dir = filepath.Dir(c.Path)
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	hideWindow(cmd)
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("ninjarmm-cli %s: timed out after %s", args[0], Timeout)
+	}
+	if err != nil {
+		msg := strings.TrimSpace(errOut.String())
+		if msg == "" {
+			msg = strings.TrimSpace(out.String())
+		}
+		if msg != "" {
+			return "", fmt.Errorf("ninjarmm-cli %s %s: %w: %s", args[0], lastArg(args), err, firstLine(msg))
+		}
+		return "", fmt.Errorf("ninjarmm-cli %s %s: %w", args[0], lastArg(args), err)
+	}
+	return out.String(), nil
+}
+
+func lastArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[len(args)-1]
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 300 {
+		s = s[:300] + "..."
+	}
+	return s
+}

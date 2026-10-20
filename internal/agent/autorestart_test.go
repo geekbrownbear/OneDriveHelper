@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
 )
 
 func testAgent(launches *int, fail bool) *Agent {

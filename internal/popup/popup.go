@@ -8,6 +8,7 @@ import (
 	"errors"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sys/windows"
 )
@@ -38,9 +39,12 @@ type Button struct {
 }
 
 // Item is one listed problem: a bold title, an optional path on its own
-// line in a smaller font, and an optional explanatory note.
+// line in a smaller font, an optional explanatory note, and an optional
+// small link under it (Link text; OnLink runs on its own goroutine).
 type Item struct {
 	Title, Path, Note string
+	Link              string
+	OnLink            func()
 }
 
 // Spec describes a card. Showing a Spec with an existing ID updates that card.
@@ -64,6 +68,11 @@ type Manager struct {
 	reqs    chan func()
 	mu      sync.Mutex
 	visible map[string]bool
+	// ctrl records whether Ctrl was held when the most recent button, menu
+	// entry or link was activated. Actions read it with CtrlHeld to offer a
+	// hidden engineering variant (e.g. copy a mailto: link instead of
+	// opening the mail program).
+	ctrl atomic.Bool
 
 	// UI-thread only:
 	cards  []*card
@@ -332,9 +341,31 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmLButtonUp:
 		if i := c.hit(lParam); i != -1 {
+			c.m.ctrl.Store(wParam&mkControl != 0)
 			c.click(i)
 		}
 		return 0
 	}
 	return call(pDefWindowProcW, hwnd, message, wParam, lParam)
+}
+
+// mkControl is the MK_CONTROL flag in mouse-message wParams.
+const mkControl = 0x0008
+
+// vkControl is VK_CONTROL for GetKeyState.
+const vkControl = 0x11
+
+// ctrlDown reports whether a Ctrl key is held right now (UI thread).
+func ctrlDown() bool {
+	r, _, _ := pGetKeyState.Call(vkControl)
+	return int16(r)&-0x8000 != 0
+}
+
+// CtrlHeld reports whether Ctrl was held when the action now running was
+// activated. Only meaningful at the start of a button, menu or link action.
+func (m *Manager) CtrlHeld() bool {
+	if m == nil {
+		return false
+	}
+	return m.ctrl.Load()
 }

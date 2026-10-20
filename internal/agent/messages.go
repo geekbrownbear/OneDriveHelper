@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/onedrive"
-	"github.com/denismcapple/OneDriveHelper/internal/popup"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/onedrive"
+	"github.com/geekbrownbear/OneDriveHelper/internal/popup"
 )
 
 const (
@@ -34,6 +34,26 @@ type Actions struct {
 	Fix         func()
 	Explain     func(topic string)
 	CopyDetails func()
+	// RequestIgnore asks support to stop monitoring one folder (the user
+	// wants to keep it). nil = no link under the folders.
+	RequestIgnore func(o onedrive.Orphan)
+}
+
+const ignoreLinkLabel = "I want to keep this folder - ask support to stop reporting it"
+
+// addIgnoreLinks puts the "keep this folder" link under every listed folder
+// (items[i] describes orphans[i]) when the action is available.
+func addIgnoreLinks(items []popup.Item, orphans []onedrive.Orphan, a Actions) {
+	if a.RequestIgnore == nil {
+		return
+	}
+	for i := range items {
+		if i >= len(orphans) {
+			return
+		}
+		o := orphans[i]
+		items[i].Link, items[i].OnLink = ignoreLinkLabel, func() { a.RequestIgnore(o) }
+	}
 }
 
 func or(s, def string) string {
@@ -119,11 +139,18 @@ func orphanItems(orphans []onedrive.Orphan, note func(onedrive.Orphan) string) (
 }
 
 func orphanSpec(c config.Config, orphans []onedrive.Orphan, a Actions) popup.Spec {
-	title := "A SharePoint library has stopped syncing"
+	one, many := "A SharePoint library has", "SharePoint libraries have"
+	for _, o := range orphans {
+		if o.EmptyOrg || o.OldOneDrive {
+			one, many = "A OneDrive folder has", "OneDrive folders have"
+		}
+	}
+	title := one + " stopped syncing"
 	if len(orphans) > 1 {
-		title = fmt.Sprintf("%d SharePoint libraries have stopped syncing", len(orphans))
+		title = fmt.Sprintf("%d %s stopped syncing", len(orphans), many)
 	}
 	items, more := orphanItems(orphans, nil)
+	addIgnoreLinks(items, orphans, a)
 	footer := c.SupportContact()
 	if more != "" {
 		footer = more + "\n\n" + footer
@@ -147,7 +174,8 @@ func fixingSpec(c config.Config) popup.Spec {
 	return popup.Spec{
 		ID: idFixing, Severity: popup.Info, Brand: c.Title(), Accent: c.AccentColor,
 		Title: "Fixing your library folders…",
-		Body:  "Saving a copy of your files and cleaning up. Please don't open or save files in those folders until this finishes.",
+		Body: "The folders have been moved to a safe place while a copy of your files is saved. " +
+			"Please save new work somewhere else until this finishes.",
 	}
 }
 

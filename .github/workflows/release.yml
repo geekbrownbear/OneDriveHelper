@@ -1,0 +1,113 @@
+name: Build and release
+
+# test.yml runs gofmt/vet/test on every push; this one builds and drafts a
+# release when a version tag is pushed (or on demand).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Vet and test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        shell: pwsh
+        run: |
+          $files = gofmt -l .
+          if ($files) { Write-Host "Not gofmt'ed:`n$files"; exit 1 }
+      - run: go vet ./...
+      - run: go test ./...
+
+  build:
+    name: Build ${{ matrix.goarch }}
+    needs: test
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    env:
+      GOOS: windows
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Work out the version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF.Substring(11) } else { "0.0.0-$($env:GITHUB_SHA.Substring(0,7))" }
+          $arch = if ($env:GOARCH -eq 'amd64') { 'x64' } else { $env:GOARCH }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "arch=$arch" >> $env:GITHUB_OUTPUT
+      - name: Build
+        shell: pwsh
+        run: |
+          $ld = "-s -w -X github.com/geekbrownbear/OneDriveHelper/internal/version.Version=${{ steps.ver.outputs.version }}"
+          New-Item -ItemType Directory -Force out | Out-Null
+          go build -trimpath -ldflags "$ld" -o out\OneDriveHelper.exe ./cmd/OneDriveHelper
+          go build -trimpath -ldflags "$ld -H=windowsgui" -o out\OneDriveHelperAgent.exe ./cmd/OneDriveHelperAgent
+          go build -trimpath -ldflags "$ld -H=windowsgui" -o out\OneDriveHelperConfig.exe ./cmd/OneDriveHelperConfig
+      # Optional code signing. Add the repository secrets CODESIGN_PFX (the
+      # .pfx file, base64) and CODESIGN_PASSWORD. Signed binaries let
+      # ThreatLocker / application control match on the certificate instead of a
+      # per-release hash.
+      - name: Sign (if a certificate is configured)
+        if: ${{ env.CODESIGN_PFX != '' }}
+        shell: pwsh
+        env:
+          CODESIGN_PFX: ${{ secrets.CODESIGN_PFX }}
+          CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CODESIGN_PFX))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /f $pfx /p $env:CODESIGN_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 out\*.exe
+          Remove-Item $pfx
+      - name: Package
+        shell: pwsh
+        run: |
+          Copy-Item LICENSE, README.md out\
+          $zip = "OneDriveHelper-v${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.arch }}.zip"
+          Compress-Archive -Path out\* -DestinationPath $zip
+          Write-Host "Built $zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OneDriveHelper-${{ steps.ver.outputs.arch }}
+          path: OneDriveHelper-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum *.zip | sed 's/  / /' | awk '{print toupper($1) "  " $2}' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --generate-notes \
+            --title "OneDrive Helper $GITHUB_REF_NAME" artifacts/*.zip artifacts/SHA256SUMS.txt

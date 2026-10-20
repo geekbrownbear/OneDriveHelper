@@ -9,14 +9,16 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/windows"
 
-	"github.com/denismcapple/OneDriveHelper/internal/agent"
-	"github.com/denismcapple/OneDriveHelper/internal/config"
-	"github.com/denismcapple/OneDriveHelper/internal/popup"
-	"github.com/denismcapple/OneDriveHelper/internal/winapi"
+	"github.com/geekbrownbear/OneDriveHelper/internal/agent"
+	"github.com/geekbrownbear/OneDriveHelper/internal/config"
+	"github.com/geekbrownbear/OneDriveHelper/internal/popup"
+	"github.com/geekbrownbear/OneDriveHelper/internal/winapi"
 )
 
 const windowTitle = "OneDrive Helper - Settings"
@@ -29,12 +31,42 @@ var layout = [][]struct {
 	{
 		{"Branding && support", []string{"CompanyName", "SupportName", "SupportEmail", "SupportPhone", "SupportURL", "SupportEmailMethod", "AccentColor"}},
 		{"Alert text (leave blank for the built-in wording)", []string{"NotRunningMessage", "OrphanMessage"}},
+		{"General", []string{"TrayIconEnabled", "PopupSound", "CheckIntervalSeconds", "AgentWatchdogSeconds"}},
 	},
 	{
 		{"OneDrive running check", []string{"OneDriveCheckEnabled", "OneDriveMissingGraceSeconds", "AutoRestartEnabled", "AutoRestartAttempts", "IgnoreOptions"}},
 		{"Library sync check", []string{"OrphanCheckEnabled", "RemediationEnabled", "BackupRoot", "FreeSpaceMarginMB"}},
-		{"General", []string{"TrayIconEnabled", "PopupSound", "CheckIntervalSeconds", "AgentWatchdogSeconds"}},
+		{"NinjaOne", []string{"NinjaEnabled", "NinjaFieldStatus", "NinjaFieldHealth", "NinjaFieldStaleCount", "NinjaFieldLastReport", "NinjaPushMinutes", "NinjaConfigField"}},
 	},
+}
+
+// contentHeight is the height of the tallest column of groups, using the
+// same metrics as build, so the window grows with the layout.
+func (f *form) contentHeight() int32 {
+	rowH, checkH, multiH := f.s(31), f.s(26), f.s(64)
+	var tallest int32
+	for _, groups := range layout {
+		var y int32
+		for _, g := range groups {
+			inner := f.s(24)
+			for _, name := range g.fields {
+				fd := f.fields[name]
+				switch {
+				case fd.Type == reflect.Bool:
+					inner += checkH + f.s(2)
+				case fd.Kind == "multiline":
+					inner += multiH + f.s(8)
+				default:
+					inner += rowH
+				}
+			}
+			y += inner + f.s(4) + f.s(16)
+		}
+		if y > tallest {
+			tallest = y
+		}
+	}
+	return tallest
 }
 
 // Command IDs.
@@ -84,8 +116,8 @@ func Run(file string) error {
 	}
 	current = f
 	f.inst = call(pGetModuleHandleW, 0)
-	f.font = call(pCreateFontW, uintptr(-f.s(15)), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, ptr(u16("Segoe UI")))
-	f.bold = call(pCreateFontW, uintptr(-f.s(15)), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, ptr(u16("Segoe UI")))
+	f.font = winapi.CreateFont(f.s(15), 400)
+	f.bold = winapi.CreateFont(f.s(15), 600)
 
 	class := u16("OneDriveHelperConfig")
 	wc := wndClassEx{
@@ -97,12 +129,13 @@ func Run(file string) error {
 		return errors.New("RegisterClassEx failed")
 	}
 
-	w, h := f.s(1000), f.s(660)
+	// Width is fixed; height follows the layout (columns + help/status lines + buttons).
+	w, h := f.s(1000), f.s(16)+f.contentHeight()+f.s(52)+f.s(32)+f.s(16)
 	if len(config.PolicyOverrides()) > 0 {
 		h += f.s(40)
 	}
 	style := uintptr(wsOverlapped | wsCaption | wsSysMenu | wsMinimizeBox)
-	r := rect{0, 0, w, h}
+	r := rect{Left: 0, Top: 0, Right: w, Bottom: h}
 	call(pAdjustWindowRectEx, ptr(&r), style, 0, wsExControlPar)
 	ww, wh := r.Right-r.Left, r.Bottom-r.Top
 	x := (int32(call(pGetSystemMetrics, smCxScreen)) - ww) / 2
@@ -377,8 +410,14 @@ func (f *form) save() {
 			return
 		}
 		exe, _ := os.Executable()
-		code, err := winapi.RunElevatedAndWait(exe, []string{"--import", tmp.Name()})
+		deadline := time.Now().Add(15 * time.Minute)
+		code, err, returned := winapi.RunElevatedWithDeadline(exe,
+			[]string{"--import", tmp.Name(), "--deadline", strconv.FormatInt(deadline.Unix(), 10)}, deadline)
 		switch {
+		case errors.Is(err, winapi.ErrTimedOut):
+			winapi.Warn(windowTitle, "Nobody approved saving the settings within 15 minutes, so nothing was saved.")
+			<-returned // the temp file must stay until the stale prompt is gone
+			return
 		case errors.Is(err, winapi.ErrCancelled):
 			return
 		case err != nil:

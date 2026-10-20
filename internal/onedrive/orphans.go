@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/denismcapple/OneDriveHelper/internal/fsutil"
+	"github.com/geekbrownbear/OneDriveHelper/internal/fsutil"
 )
 
 // Orphan is a library folder that exists on disk but that OneDrive is no
@@ -22,9 +22,11 @@ type Orphan struct {
 	// EmptyOrg marks a leftover organisation folder that contains no
 	// libraries at all (Path == TenantRoot). There is nothing to re-sync.
 	EmptyOrg bool
-	// Personal marks a personal "OneDrive - <Org>" folder whose account is no
-	// longer signed in on this PC (Path == TenantRoot).
-	Personal bool
+	// OldOneDrive marks a work OneDrive folder ("OneDrive - <Org>") whose
+	// account is no longer signed in on this PC (Path == TenantRoot), for
+	// example after the user left an organisation or it was renamed. The
+	// consumer "OneDrive" placeholder is never reported.
+	OldOneDrive bool
 	// KnownFolders lists Windows folders (Desktop, Documents, ...) that are
 	// redirected into this folder. Such folders are never removed automatically.
 	KnownFolders []string
@@ -34,13 +36,13 @@ type Orphan struct {
 func (o Orphan) Org() string { return filepath.Base(o.TenantRoot) }
 
 // DisplayName is "Library (Org)", "Org (empty organisation folder)" or
-// "OneDrive - Org (personal OneDrive folder)".
+// "OneDrive - Org (old work OneDrive folder)".
 func (o Orphan) DisplayName() string {
 	switch {
 	case o.EmptyOrg:
 		return o.Name + " (empty organisation folder)"
-	case o.Personal:
-		return o.Name + " (personal OneDrive folder)"
+	case o.OldOneDrive:
+		return o.Name + " (old work OneDrive folder)"
 	}
 	if o.TenantRoot == "" {
 		return o.Name
@@ -61,6 +63,24 @@ type Inputs struct {
 	Policies   []Library // re-sync IDs recovered from ClientPolicy_*.ini (matched by URL)
 	// ShellFolders are the user's Desktop/Documents/... locations.
 	ShellFolders map[string]string // name -> path
+	// ReadErrors lists sources that exist but could not be read. When it is
+	// not empty the data may be incomplete, so IsActive treats every path as
+	// active and nothing should be changed on the strength of it.
+	ReadErrors []string
+	// Ignored are folders (cleaned paths) a technician chose to keep; they
+	// are never reported or fixed. See IgnoredFolders.
+	Ignored []string
+}
+
+// IsIgnored reports whether p is on, or inside a folder on, the ignore list.
+func (in Inputs) IsIgnored(p string) bool {
+	c := Clean(p)
+	for _, ig := range in.Ignored {
+		if within(c, ig) {
+			return true
+		}
+	}
+	return false
 }
 
 const userShellFoldersPath = `Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders`
@@ -68,12 +88,18 @@ const userShellFoldersPath = `Software\Microsoft\Windows\CurrentVersion\Explorer
 // ShellFolders reads the user's known-folder locations (Desktop, Documents,
 // Pictures, ...), expanding %USERPROFILE% to profileDir.
 func ShellFolders(h Hive, profileDir string) map[string]string {
+	return shellFolders(h, profileDir, nil)
+}
+
+func shellFolders(h Hive, profileDir string, r *readErrs) map[string]string {
 	k, err := h.Open(userShellFoldersPath, registry.QUERY_VALUE)
 	if err != nil {
+		r.add(h.Prefix+userShellFoldersPath, err)
 		return nil
 	}
 	defer k.Close()
-	names, _ := k.ReadValueNames(-1)
+	names, err := k.ReadValueNames(-1)
+	r.add(h.Prefix+userShellFoldersPath, err)
 	out := map[string]string{}
 	for _, n := range names {
 		v, _, err := k.GetStringValue(n)
@@ -126,19 +152,26 @@ func (osFS) ReadFile(p string) ([]byte, error)        { return os.ReadFile(p) }
 var OSFS FS = osFS{}
 
 // Gather collects detection inputs for the user behind h.
+//
+// Sources that exist but cannot be read are listed in ReadErrors. The
+// ClientPolicy files are not: they only supply re-sync IDs, never decide
+// whether a folder is active.
 func Gather(h Hive, profileDir string) Inputs {
-	accts := Accounts(h)
+	r := &readErrs{}
+	accts := accounts(h, r)
 	in := Inputs{
 		ProfileDir: profileDir,
 		Accounts:   accts,
-		Providers:  Providers(h),
-		SyncRoots:  RegisteredSyncRoots(),
-		Known:      LoadLibraries(h),
+		Providers:  providers(h, r),
+		SyncRoots:  registeredSyncRoots(r),
+		Known:      loadLibraries(h, r),
+		Ignored:    IgnoredPaths(),
 	}
 	if profileDir != "" {
 		in.Policies = ReadClientPolicies(filepath.Join(profileDir, "AppData", "Local"), accts)
 	}
-	in.ShellFolders = ShellFolders(h, profileDir)
+	in.ShellFolders = shellFolders(h, profileDir, r)
+	in.ReadErrors = r.list
 	return in
 }
 
@@ -156,8 +189,9 @@ func (in Inputs) ActivePaths() []string {
 }
 
 // IsActive reports whether p is, contains, or is inside an active sync folder.
+// If any OneDrive data could not be read, every path counts as active.
 func (in Inputs) IsActive(p string) bool {
-	return overlaps(Clean(p), in.ActivePaths())
+	return len(in.ReadErrors) > 0 || overlaps(Clean(p), in.ActivePaths())
 }
 
 func overlaps(p string, active []string) bool {
@@ -215,26 +249,30 @@ func FindOrphans(in Inputs, fs FS) []Orphan {
 		}
 	}
 	var out []Orphan
-	personal := map[string]bool{}
-	addPersonal := func(p string) {
+	oldOneDrive := map[string]bool{}
+	addOldOneDrive := func(p string) {
 		c := Clean(p)
-		if c == "" || personal[c] || c == profile || isVolumeRoot(c) || overlaps(c, active) {
+		if c == "" || oldOneDrive[c] || c == profile || isVolumeRoot(c) || overlaps(c, active) || !IsWorkOneDriveName(filepath.Base(p)) {
 			return
 		}
-		personal[c] = true
-		out = append(out, Orphan{Path: p, TenantRoot: p, Name: filepath.Base(p), Personal: true})
+		oldOneDrive[c] = true
+		out = append(out, Orphan{Path: p, TenantRoot: p, Name: filepath.Base(p), OldOneDrive: true})
 	}
-	// Personal OneDrive folders recorded by OneDrive that still exist.
+	// Work OneDrive folders OneDrive recorded that still exist but no
+	// signed-in account uses.
 	for _, p := range in.Providers {
 		if t := strings.ToLower(p.LibraryType); p.MountPoint != "" && (t == "personal" || t == "mysite") {
 			if _, err := fs.ReadDir(p.MountPoint); err == nil {
-				addPersonal(p.MountPoint)
+				addOldOneDrive(p.MountPoint)
 			}
 		}
 	}
 	// Folders in the profile carrying OneDrive's desktop.ini: plain ones are
-	// organisation folders; "OneDrive..." placeholder ones are personal
-	// OneDrive folders (orphaned when no signed-in account uses them).
+	// organisation folders. "OneDrive..." ones are the user's own OneDrive
+	// folders, never scanned as organisation folders. "OneDrive - <Org>"
+	// with no signed-in account is an old work OneDrive and is reported;
+	// the consumer "OneDrive" (or "OneDrive - Personal") placeholder is
+	// not, because a fresh PC signed in to a work account always has one.
 	if in.ProfileDir != "" {
 		entries, _ := fs.ReadDir(in.ProfileDir)
 		for _, e := range entries {
@@ -246,7 +284,7 @@ func FindOrphans(in Inputs, fs FS) []Orphan {
 			odIni := err == nil && strings.Contains(strings.ToLower(decodeText(b)), "onedrive.exe")
 			switch {
 			case strings.HasPrefix(strings.ToLower(e.Name), "onedrive") && (e.IsCloud() || odIni):
-				addPersonal(dir)
+				addOldOneDrive(dir)
 			case odIni && e.Attr&fsutil.AttrReparsePoint == 0:
 				addRoot(dir)
 			}
@@ -293,11 +331,32 @@ func FindOrphans(in Inputs, fs FS) []Orphan {
 			out = append(out, o)
 		}
 	}
+	// Folders a technician chose to keep are dropped here, so neither the
+	// alert nor a fix plan ever sees them.
+	kept := out[:0]
+	for _, o := range out {
+		if !in.IsIgnored(o.Path) {
+			kept = append(kept, o)
+		}
+	}
+	out = kept
 	for i := range out {
 		out[i].KnownFolders = in.knownFoldersIn(out[i].Path)
 	}
 	sort.Slice(out, func(i, j int) bool { return Clean(out[i].Path) < Clean(out[j].Path) })
 	return out
+}
+
+// IsWorkOneDriveName reports whether a folder name is a work OneDrive folder,
+// "OneDrive - <Org>", as opposed to the consumer "OneDrive" or
+// "OneDrive - Personal" placeholder.
+func IsWorkOneDriveName(name string) bool {
+	l := strings.ToLower(strings.TrimSpace(name))
+	if !strings.HasPrefix(l, "onedrive - ") {
+		return false
+	}
+	org := strings.TrimSpace(l[len("onedrive - "):])
+	return org != "" && org != "personal"
 }
 
 // knownFor finds re-sync details for a folder: our own cache first, then a
